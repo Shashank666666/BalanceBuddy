@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-// import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { useAuth } from '../context/AuthContext';
 import { Alert, ActivityIndicator } from 'react-native';
 import {
@@ -19,6 +18,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS, LIGHT, DARK, SHARED_COLORS } from '../constants/theme';
 
+
+
 const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }) {
@@ -26,18 +27,13 @@ export default function LoginScreen({ navigation }) {
     const isDark = colorScheme === 'dark';
     const theme = isDark ? DARK : LIGHT;
 
-    const { login, signup, loginWithGoogle } = useAuth();
+    const { login, signup } = useAuth();
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
 
-    useEffect(() => {
-        // GoogleSignin.configure({
-        //     webClientId: '658599798345-uv28q39r3b9n2183e8v561332828ff78.apps.googleusercontent.com', 
-        //     offlineAccess: true,
-        // });
-    }, []);
+
 
     const handleSignIn = async () => {
         const trimmedEmail = email.trim();
@@ -92,32 +88,7 @@ export default function LoginScreen({ navigation }) {
         }
     };
 
-    const handleGoogleSignIn = async () => {
-        Alert.alert(
-            'Google Sign In',
-            'Google login requires a real device build (APK) and does not work in Expo Go. Please use Email/Password to review the app for now.'
-        );
-        /*
-        setLoading(true);
-        try {
-            await GoogleSignin.hasPlayServices();
-            const userInfo = await GoogleSignin.signIn();
-            const idToken = userInfo.data?.idToken || userInfo.idToken;
 
-            if (idToken) {
-                await loginWithGoogle(idToken);
-                navigation.replace('MainTabs');
-            } else {
-                throw new Error('No ID Token found');
-            }
-        } catch (error) {
-            console.error('Google Sign-In Error:', error);
-            Alert.alert('Google Login Failed', error.message);
-        } finally {
-            setLoading(false);
-        }
-        */
-    };
 
     return (
         <KeyboardAvoidingView
@@ -232,24 +203,7 @@ export default function LoginScreen({ navigation }) {
                         </LinearGradient>
                     </TouchableOpacity>
 
-                    {/* Divider */}
-                    <View style={styles.dividerRow}>
-                        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-                        <Text style={[styles.dividerText, { color: theme.textMuted }]}>or continue with</Text>
-                        <View style={[styles.dividerLine, { backgroundColor: theme.border }]} />
-                    </View>
 
-                    {/* Social Buttons */}
-                    <View style={styles.socialRow}>
-                        <TouchableOpacity
-                            style={[styles.socialBtn, { backgroundColor: theme.inputBg, borderColor: theme.border }]}
-                            activeOpacity={0.7}
-                            onPress={handleGoogleSignIn}
-                        >
-                            <Ionicons name="logo-google" size={20} color="#EA4335" />
-                            <Text style={[styles.socialText, { color: theme.textPrimary }]}>Continue with Google</Text>
-                        </TouchableOpacity>
-                    </View>
 
                     {/* Sign Up Link */}
                     <View style={styles.signupRow}>

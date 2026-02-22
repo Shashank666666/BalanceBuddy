@@ -11,6 +11,7 @@ import {
     useColorScheme,
     SafeAreaView,
     ActivityIndicator,
+    Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -124,7 +125,11 @@ export default function OnboardingScreen({ navigation }) {
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
                     >
-                        <MaterialCommunityIcons name="wallet-travel" size={64} color="#fff" />
+                        <Animated.Image
+                            source={require('../../assets/icon.png')}
+                            style={{ width: 80, height: 80, borderRadius: 20 }}
+                            resizeMode="contain"
+                        />
                     </LinearGradient>
                 </View>
 

@@ -8,6 +8,7 @@ import {
     StatusBar,
     Dimensions,
     useColorScheme,
+    Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -41,79 +42,181 @@ export default function HomeScreen({ navigation }) {
 
     const { user } = useAuth();
     const [latestTrip, setLatestTrip] = useState(null);
-    const [activeCurrencies, setActiveCurrencies] = useState([]);
-    const [liveRates, setLiveRates] = useState({});
     const [loading, setLoading] = useState(true);
+    const [showTripPicker, setShowTripPicker] = useState(false);
+    const [allTrips, setAllTrips] = useState([]);
+    const [userBalance, setUserBalance] = useState(0);
 
     const defaultCurrency = user?.defaultCurrency || 'USD';
 
     useEffect(() => {
         if (!user) return;
 
-        // Fetch all trips to find active ones and latest one
-        const q = query(
+        let unsub2 = null;
+
+        // Query trips where user is a traveller
+        const q1 = query(
+            collection(db, 'trips'),
+            where('travellerEmails', 'array-contains', user.email?.toLowerCase())
+        );
+
+        // Query trips where user is the creator (legacy/backup)
+        const q2 = query(
             collection(db, 'trips'),
             where('creatorId', '==', user.uid)
         );
 
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const allTrips = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const unsub1 = onSnapshot(q1, (snap1) => {
+            const trips1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
 
-            // Latest trip (Active first, then recent)
-            const sorted = [...allTrips].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            setLatestTrip(sorted[0]);
+            if (unsub2) unsub2();
 
-            // Currencies from all active trips
-            const currencies = new Set();
-            allTrips.forEach(trip => {
-                if (trip.status === 'Active' && trip.baseCurrency) {
-                    currencies.add(trip.baseCurrency);
-                }
+            unsub2 = onSnapshot(q2, (snap2) => {
+                const trips2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                // Merge and dedup
+                const merged = [...trips1];
+                trips2.forEach(t => {
+                    if (!merged.find(m => m.id === t.id)) merged.push(t);
+                });
+
+                setAllTrips(merged);
+
+                const activeOnes = merged.filter(t => t.status === 'Active' || t.status === 'Planning');
+                const sorted = [...activeOnes].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                setLatestTrip(sorted[0] || null);
+
+                setLoading(false);
+            }, (error) => {
+                console.error('Error fetching creator trips:', error);
+                setLoading(false);
             });
-            setActiveCurrencies(Array.from(currencies));
-
-            setLoading(false);
         }, (error) => {
-            console.error('Error fetching trips: ', error);
+            console.error('Error fetching shared trips:', error);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => {
+            if (unsub1) unsub1();
+            if (unsub2) unsub2();
+        };
     }, [user]);
 
-    // Fetch Live Rates for active currencies
+    const [unreadCount, setUnreadCount] = useState(0);
+
     useEffect(() => {
-        const fetchHomeRates = async () => {
-            if (activeCurrencies.length === 0) {
-                setLiveRates({});
-                return;
-            }
+        if (!user?.uid || allTrips.length === 0) {
+            setUnreadCount(0);
+            return;
+        }
 
-            const API_KEY = '0c65db1ed39247c720952a990c228cc4';
-            try {
-                // Fetch rates for the user's default currency
-                const res = await fetch(`http://api.exchangerate.host/live?access_key=${API_KEY}&source=${defaultCurrency}`);
-                const data = await res.json();
+        // If lastCheckedActivities is null, it's likely syncing from serverTimestamp()
+        // In that case, we should treat it as "now" (0 unread) to avoid a flash of unread counts
+        const lastChecked = user.lastCheckedActivities?.seconds || (user.lastCheckedActivities === null ? (Date.now() / 1000) : 0);
 
-                if (data.success) {
-                    const newRates = {};
-                    activeCurrencies.forEach(curr => {
-                        if (curr === defaultCurrency) return;
-                        const quoteKey = `${defaultCurrency}${curr}`;
-                        const rate = data.quotes[quoteKey];
-                        if (rate) newRates[curr] = rate;
-                    });
-                    setLiveRates(newRates);
-                }
-            } catch (err) {
-                console.log('Home rates fetch failed:', err);
-            }
+        const unsubs = [];
+        const counts = {};
+        const destUnsubsMap = new Map(); // Track nested listeners
+
+        allTrips.forEach(trip => {
+            // 1. Direct expenses
+            const qDirect = query(collection(db, 'trips', trip.id, 'expenses'));
+            unsubs.push(onSnapshot(qDirect, (snap) => {
+                const newOnes = snap.docs.filter(d => {
+                    const data = d.data();
+                    if (data.paidBy === user.uid) return false;
+                    const createdSecs = data.createdAt?.seconds;
+                    if (!createdSecs) return false;
+                    return createdSecs > lastChecked;
+                }).length;
+
+                counts[`${trip.id}_direct`] = newOnes;
+                setUnreadCount(Object.values(counts).reduce((a, b) => a + b, 0));
+            }));
+
+            // 2. Destination expenses
+            const qDest = collection(db, 'trips', trip.id, 'destinations');
+            unsubs.push(onSnapshot(qDest, (destSnap) => {
+                const currentDestIds = destSnap.docs.map(d => d.id);
+
+                // Cleanup removed destinations for this trip
+                destUnsubsMap.forEach((unsub, key) => {
+                    if (key.startsWith(`${trip.id}_`) && !currentDestIds.includes(key.split('_')[1])) {
+                        unsub();
+                        destUnsubsMap.delete(key);
+                        delete counts[key];
+                    }
+                });
+
+                destSnap.docs.forEach(destDoc => {
+                    const destId = destDoc.id;
+                    const key = `${trip.id}_${destId}`;
+
+                    if (!destUnsubsMap.has(key)) {
+                        const unsub = onSnapshot(query(collection(db, 'trips', trip.id, 'destinations', destId, 'expenses')), (expSnap) => {
+                            const newOnes = expSnap.docs.filter(d => {
+                                const data = d.data();
+                                if (data.paidBy === user.uid) return false;
+                                const createdSecs = data.createdAt?.seconds;
+                                if (!createdSecs) return false;
+                                return createdSecs > lastChecked;
+                            }).length;
+
+                            counts[key] = newOnes;
+                            setUnreadCount(Object.values(counts).reduce((a, b) => a + b, 0));
+                        }, (err) => console.error(`Dest count error [${destId}]:`, err));
+                        destUnsubsMap.set(key, unsub);
+                    }
+                });
+            }));
+        });
+
+        return () => {
+            unsubs.forEach(u => u());
+            destUnsubsMap.forEach(u => u());
         };
+    }, [allTrips, user?.lastCheckedActivities, user?.uid]);
 
-        fetchHomeRates();
-        const interval = setInterval(fetchHomeRates, 300000); // 5 mins
-        return () => clearInterval(interval);
-    }, [activeCurrencies, defaultCurrency]);
+    useEffect(() => {
+        if (!latestTrip?.id || !user) {
+            setUserBalance(0);
+            return;
+        }
+
+        const q = query(collection(db, 'trips', latestTrip.id, 'expenses'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const expenses = snapshot.docs.map(doc => doc.data());
+
+            // Find my nickname in this trip
+            const meInTrip = latestTrip.travellers?.find(t =>
+                t.email && t.email.toLowerCase() === user.email?.toLowerCase()
+            );
+            const myNickname = meInTrip?.name;
+            const myId = user.uid;
+
+            let net = 0;
+            expenses.forEach(exp => {
+                const { amount, paidByNickname, splitWith, paidBy } = exp;
+                if (!amount || !splitWith || splitWith.length === 0) return;
+
+                const perHead = amount / splitWith.length;
+
+                // I paid
+                if (paidBy === myId || (myNickname && paidByNickname === myNickname) || paidByNickname === 'You') {
+                    net += amount;
+                }
+
+                // I'm in the split
+                if (splitWith.includes('You') || (myNickname && splitWith.includes(myNickname))) {
+                    net -= perHead;
+                }
+            });
+            setUserBalance(net);
+        });
+
+        return () => unsubscribe();
+    }, [latestTrip?.id, user]);
+
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -140,34 +243,57 @@ export default function HomeScreen({ navigation }) {
                     {/* Top Row */}
                     <View style={styles.headerTop}>
                         <View>
-                            <Text style={styles.greetingText}>Good evening 🤙</Text>
+                            <Text style={styles.greetingText}>Welcome back 👋</Text>
                             <Text style={styles.greetingName}>{user?.email?.split('@')[0] || 'Traveller'}</Text>
                         </View>
                         <View style={styles.headerActions}>
-                            <TouchableOpacity style={styles.notifBtn}>
+                            <TouchableOpacity
+                                style={styles.notifBtn}
+                                onPress={() => {
+                                    setUnreadCount(0); // Optimistic reset
+                                    navigation.navigate('Activity');
+                                }}
+                            >
                                 <Ionicons name="notifications-outline" size={22} color="#fff" />
-                                <View style={styles.notifBadge}>
-                                    <Text style={styles.notifBadgeText}>4</Text>
-                                </View>
+                                {unreadCount > 0 && (
+                                    <View style={styles.notifBadge}>
+                                        <Text style={styles.notifBadgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+                                    </View>
+                                )}
                             </TouchableOpacity>
                         </View>
                     </View>
 
                     {/* Balance Card */}
                     <View style={styles.balanceCard}>
-                        <Text style={styles.balanceLabel}>Your Balance</Text>
-                        <Text style={styles.balanceAmount}>+$0.00</Text>
-                        <View style={styles.balanceFooter}>
-                            <View style={styles.balanceLeftInfo}>
-                                <MaterialCommunityIcons
-                                    name="currency-usd"
-                                    size={14}
-                                    color={COLORS.greenLight}
-                                />
-                                <Text style={styles.balancePeopleOwe}>People owe you</Text>
-                            </View>
-                            <Text style={styles.pendingSettlements}>0 pending{'\n'}settlements</Text>
-                        </View>
+                        {(() => {
+                            const tripCurrency = latestTrip?.baseCurrency || defaultCurrency;
+                            const isPositive = userBalance >= 0;
+
+                            return (
+                                <>
+                                    <Text style={styles.balanceLabel}>Your Balance ({tripCurrency})</Text>
+                                    <Text style={[styles.balanceAmount, { color: isPositive ? '#fff' : '#ef4444' }]}>
+                                        {isPositive ? '+' : '-'}{tripCurrency} {Math.abs(userBalance).toFixed(2)}
+                                    </Text>
+                                    <View style={styles.balanceFooter}>
+                                        <View style={styles.balanceLeftInfo}>
+                                            <MaterialCommunityIcons
+                                                name={isPositive ? "currency-usd" : "alert-circle-outline"}
+                                                size={14}
+                                                color={isPositive ? COLORS.greenLight : '#ef4444'}
+                                            />
+                                            <Text style={[styles.balancePeopleOwe, !isPositive && { color: '#ef4444' }]}>
+                                                {userBalance === 0 ? 'All settled up!' : (isPositive ? 'People owe you' : 'You owe people')}
+                                            </Text>
+                                        </View>
+                                        <Text style={styles.pendingSettlements}>
+                                            Based on latest trip
+                                        </Text>
+                                    </View>
+                                </>
+                            );
+                        })()}
                     </View>
                 </LinearGradient>
 
@@ -177,22 +303,22 @@ export default function HomeScreen({ navigation }) {
                         icon={<Ionicons name="add" size={24} color="#fff" />}
                         label="Add Expense"
                         bgColor="#7C3AED"
+                        onPress={() => setShowTripPicker(true)}
                     />
                     <QuickAction
                         icon={<Ionicons name="people-outline" size={24} color="#fff" />}
                         label="My Trips"
                         bgColor="#A855F7"
-                        onPress={() => navigation.navigate('Trips')}
-                    />
-                    <QuickAction
-                        icon={<MaterialCommunityIcons name="wallet-outline" size={24} color="#fff" />}
-                        label="Settle Up"
-                        bgColor="#38BDF8"
+                        onPress={() => navigation.navigate('MainTabs', { screen: 'Trips' })}
                     />
                     <QuickAction
                         icon={<FontAwesome5 name="globe" size={20} color="#fff" />}
                         label="Live Rates"
                         bgColor="#2DD4BF"
+                        onPress={() => navigation.navigate('CurrencyConverter', {
+                            fromCurr: defaultCurrency,
+                            toCurr: latestTrip?.baseCurrency || 'EUR'
+                        })}
                     />
                 </View>
 
@@ -248,15 +374,12 @@ export default function HomeScreen({ navigation }) {
                             <Text style={styles.travellingTogether}>Travelling together</Text>
                         </View>
 
-                        {/* Budget Progress */}
-                        <View style={styles.progressSection}>
-                            <View style={styles.progressLabelRow}>
-                                <Text style={styles.progressLabel}>Budget used</Text>
-                                <Text style={styles.progressPercent}>{Math.round((latestTrip.totalSpent / (latestTrip.budget || 1)) * 100)}%</Text>
-                            </View>
-                            <View style={styles.progressBarBg}>
-                                <View style={[styles.progressBarFill, { width: `${Math.min((latestTrip.totalSpent / (latestTrip.budget || 1)) * 100, 100)}%` }]} />
-                            </View>
+                        {/* Travelling Status */}
+                        <View style={{ marginTop: 15, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: latestTrip.status === 'Active' ? '#10B981' : '#A78BFA' }} />
+                            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700' }}>
+                                {latestTrip.status === 'Active' ? 'Happening now' : 'Planned adventure'}
+                            </Text>
                         </View>
                     </TouchableOpacity>
                 ) : (
@@ -275,35 +398,43 @@ export default function HomeScreen({ navigation }) {
                     </TouchableOpacity>
                 )}
 
-                {/* Live Rates Footer */}
-                <View style={styles.liveRatesSection}>
-                    <View style={styles.liveRatesHeader}>
-                        <View style={styles.liveRatesDot} />
-                        <Text style={styles.liveRatesHeaderTitle}>ONGOING TRIP RATES ({defaultCurrency})</Text>
-                    </View>
-
-                    {Object.keys(liveRates).length > 0 ? (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.ratesScroll}>
-                            {Object.entries(liveRates).map(([curr, rate]) => (
-                                <View key={curr} style={styles.rateCard}>
-                                    <Text style={styles.rateCurr}>{curr}</Text>
-                                    <Text style={styles.rateValue}>{rate.toFixed(3)}</Text>
-                                    <Text style={styles.rateTrend}>+0.00%</Text>
-                                </View>
-                            ))}
-                        </ScrollView>
-                    ) : (
-                        <View style={styles.noRatesContainer}>
-                            <Text style={styles.noRatesText}>
-                                {activeCurrencies.length > 0
-                                    ? `Fetching rates for ${activeCurrencies.join(', ')}...`
-                                    : 'Add active trips to see live rates here'}
-                            </Text>
-                        </View>
-                    )}
-                </View>
             </ScrollView>
-        </View>
+
+            {/* Trip Picker Modal */}
+            <Modal visible={showTripPicker} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select Trip</Text>
+                            <TouchableOpacity onPress={() => setShowTripPicker(false)}>
+                                <Ionicons name="close" size={24} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView style={{ maxHeight: 400 }}>
+                            {allTrips.filter(t => t.status === 'Active').map(trip => (
+                                <TouchableOpacity
+                                    key={trip.id}
+                                    style={styles.tripSelectItem}
+                                    onPress={() => {
+                                        setShowTripPicker(false);
+                                        navigation.navigate('TripDetail', { trip, openAddExpense: true });
+                                    }}
+                                >
+                                    <Text style={styles.tripSelectEmoji}>{trip.icon || '✈️'}</Text>
+                                    <View>
+                                        <Text style={styles.tripSelectName}>{trip.name}</Text>
+                                        <Text style={styles.tripSelectDest}>{trip.destination || 'No destination'}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                            {allTrips.filter(t => t.status === 'Active').length === 0 && (
+                                <Text style={styles.noActiveTripsText}>No active trips found. Start a trip first!</Text>
+                            )}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+        </View >
     );
 }
 
@@ -713,11 +844,16 @@ const styles = StyleSheet.create({
         marginRight: 10,
         minWidth: 100,
     },
+    rateHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 4,
+    },
     rateCurr: {
         color: 'rgba(255,255,255,0.4)',
         fontSize: 11,
         fontWeight: '700',
-        marginBottom: 4
     },
     rateValue: {
         color: '#fff',
@@ -744,4 +880,54 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '500'
     },
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#1E293B',
+        borderTopLeftRadius: RADIUS.xl,
+        borderTopRightRadius: RADIUS.xl,
+        padding: SPACING.lg,
+        paddingBottom: 40,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: SPACING.lg,
+    },
+    modalTitle: {
+        color: '#fff',
+        fontSize: 20,
+        fontWeight: '800',
+    },
+    tripSelectItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: SPACING.md,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: RADIUS.md,
+        marginBottom: SPACING.sm,
+    },
+    tripSelectEmoji: {
+        fontSize: 24,
+        marginRight: SPACING.md,
+    },
+    tripSelectName: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    tripSelectDest: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 12,
+    },
+    noActiveTripsText: {
+        color: 'rgba(255,255,255,0.4)',
+        textAlign: 'center',
+        marginVertical: 20,
+    }
 });

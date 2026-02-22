@@ -1,0 +1,39 @@
+{
+    "project_info": {
+        "project_number": "658599798345",
+        "project_id": "balancebuddy-ff86f",
+        "storage_bucket": "balancebuddy-ff86f.firebasestorage.app"
+    },
+    "client": [
+        {
+            "client_info": {
+                "mobilesdk_app_id": "1:658599798345:android:bafffee4ff22d58e7cc198",
+                "android_client_info": {
+                    "package_name": "com.balancebuddy.app"
+                }
+            },
+            "oauth_client": [
+                {
+                    "client_id": "658599798345-uv28q39r3b9n2183e8v561332828ff78.apps.googleusercontent.com",
+                    "client_type": 3
+                }
+            ],
+            "api_key": [
+                {
+                    "current_key": "AIzaSyBEwrVWaZtJmsX1E5djf0ECN0aiQSDES7g"
+                }
+            ],
+            "services": {
+                "appinvite_service": {
+                    "other_platform_oauth_client": [
+                        {
+                            "client_id": "658599798345-uv28q39r3b9n2183e8v561332828ff78.apps.googleusercontent.com",
+                            "client_type": 3
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "configuration_version": "1"
+}

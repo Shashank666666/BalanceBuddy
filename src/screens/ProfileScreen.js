@@ -12,118 +12,14 @@ import * as ImagePicker from 'expo-image-picker';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage, db, auth as firebaseAuth } from '../config/firebase';
 import { doc, updateDoc, collection, query, where, onSnapshot } from 'firebase/firestore';
-import { updateProfile } from 'firebase/auth';
+import { updateProfile, sendPasswordResetEmail } from 'firebase/auth';
+import { CURRENCIES, POPULAR_CODES } from '../constants/currencies';
 
 const SectionHeader = ({ title, theme }) => (
     <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>{title}</Text>
 );
 
-const CURRENCIES = [
-    // Popular
-    { code: 'USD', flag: '🇺🇸', name: 'US Dollar', country: 'United States' },
-    { code: 'EUR', flag: '🇪🇺', name: 'Euro', country: 'Eurozone' },
-    { code: 'GBP', flag: '🇬🇧', name: 'British Pound', country: 'United Kingdom' },
-    { code: 'JPY', flag: '🇯🇵', name: 'Japanese Yen', country: 'Japan' },
-    { code: 'AUD', flag: '🇦🇺', name: 'Australian Dollar', country: 'Australia' },
-    { code: 'CAD', flag: '🇨🇦', name: 'Canadian Dollar', country: 'Canada' },
-    { code: 'CHF', flag: '🇨🇭', name: 'Swiss Franc', country: 'Switzerland' },
-    { code: 'CNY', flag: '🇨🇳', name: 'Chinese Yuan', country: 'China' },
-    { code: 'INR', flag: '🇮🇳', name: 'Indian Rupee', country: 'India' },
-    { code: 'SGD', flag: '🇸🇬', name: 'Singapore Dollar', country: 'Singapore' },
-    { code: 'AED', flag: '🇦🇪', name: 'UAE Dirham', country: 'United Arab Emirates' },
-    { code: 'SAR', flag: '🇸🇦', name: 'Saudi Riyal', country: 'Saudi Arabia' },
-    { code: 'KWD', flag: '🇰🇼', name: 'Kuwaiti Dinar', country: 'Kuwait' },
-    { code: 'QAR', flag: '🇶🇦', name: 'Qatari Riyal', country: 'Qatar' },
-    { code: 'BHD', flag: '🇧🇭', name: 'Bahraini Dinar', country: 'Bahrain' },
-    { code: 'OMR', flag: '🇴🇲', name: 'Omani Rial', country: 'Oman' },
-    { code: 'JOD', flag: '🇯🇴', name: 'Jordanian Dinar', country: 'Jordan' },
-    { code: 'EGP', flag: '🇪🇬', name: 'Egyptian Pound', country: 'Egypt' },
-    { code: 'PKR', flag: '🇵🇰', name: 'Pakistani Rupee', country: 'Pakistan' },
-    { code: 'BDT', flag: '🇧🇩', name: 'Bangladeshi Taka', country: 'Bangladesh' },
-    { code: 'LKR', flag: '🇱🇰', name: 'Sri Lankan Rupee', country: 'Sri Lanka' },
-    { code: 'NPR', flag: '🇳🇵', name: 'Nepalese Rupee', country: 'Nepal' },
-    { code: 'THB', flag: '🇹🇭', name: 'Thai Baht', country: 'Thailand' },
-    { code: 'MYR', flag: '🇲🇾', name: 'Malaysian Ringgit', country: 'Malaysia' },
-    { code: 'IDR', flag: '🇮🇩', name: 'Indonesian Rupiah', country: 'Indonesia' },
-    { code: 'PHP', flag: '🇵🇭', name: 'Philippine Peso', country: 'Philippines' },
-    { code: 'VND', flag: '🇻🇳', name: 'Vietnamese Dong', country: 'Vietnam' },
-    { code: 'KRW', flag: '🇰🇷', name: 'South Korean Won', country: 'South Korea' },
-    { code: 'HKD', flag: '🇭🇰', name: 'Hong Kong Dollar', country: 'Hong Kong' },
-    { code: 'TWD', flag: '🇹🇼', name: 'Taiwan Dollar', country: 'Taiwan' },
-    { code: 'NZD', flag: '🇳🇿', name: 'New Zealand Dollar', country: 'New Zealand' },
-    { code: 'ZAR', flag: '🇿🇦', name: 'South African Rand', country: 'South Africa' },
-    { code: 'NGN', flag: '🇳🇬', name: 'Nigerian Naira', country: 'Nigeria' },
-    { code: 'KES', flag: '🇰🇪', name: 'Kenyan Shilling', country: 'Kenya' },
-    { code: 'GHS', flag: '🇬🇭', name: 'Ghanaian Cedi', country: 'Ghana' },
-    { code: 'MAD', flag: '🇲🇦', name: 'Moroccan Dirham', country: 'Morocco' },
-    { code: 'TND', flag: '🇹🇳', name: 'Tunisian Dinar', country: 'Tunisia' },
-    { code: 'DZD', flag: '🇩🇿', name: 'Algerian Dinar', country: 'Algeria' },
-    { code: 'TRY', flag: '🇹🇷', name: 'Turkish Lira', country: 'Turkey' },
-    { code: 'RUB', flag: '🇷🇺', name: 'Russian Ruble', country: 'Russia' },
-    { code: 'UAH', flag: '🇺🇦', name: 'Ukrainian Hryvnia', country: 'Ukraine' },
-    { code: 'PLN', flag: '🇵🇱', name: 'Polish Zloty', country: 'Poland' },
-    { code: 'SEK', flag: '🇸🇪', name: 'Swedish Krona', country: 'Sweden' },
-    { code: 'NOK', flag: '🇳🇴', name: 'Norwegian Krone', country: 'Norway' },
-    { code: 'DKK', flag: '🇩🇰', name: 'Danish Krone', country: 'Denmark' },
-    { code: 'CZK', flag: '🇨🇿', name: 'Czech Koruna', country: 'Czech Republic' },
-    { code: 'HUF', flag: '🇭🇺', name: 'Hungarian Forint', country: 'Hungary' },
-    { code: 'RON', flag: '🇷🇴', name: 'Romanian Leu', country: 'Romania' },
-    { code: 'BGN', flag: '🇧🇬', name: 'Bulgarian Lev', country: 'Bulgaria' },
-    { code: 'HRK', flag: '🇭🇷', name: 'Croatian Kuna', country: 'Croatia' },
-    { code: 'RSD', flag: '🇷🇸', name: 'Serbian Dinar', country: 'Serbia' },
-    { code: 'MXN', flag: '🇲🇽', name: 'Mexican Peso', country: 'Mexico' },
-    { code: 'BRL', flag: '🇧🇷', name: 'Brazilian Real', country: 'Brazil' },
-    { code: 'ARS', flag: '🇦🇷', name: 'Argentine Peso', country: 'Argentina' },
-    { code: 'CLP', flag: '🇨🇱', name: 'Chilean Peso', country: 'Chile' },
-    { code: 'COP', flag: '🇨🇴', name: 'Colombian Peso', country: 'Colombia' },
-    { code: 'PEN', flag: '🇵🇪', name: 'Peruvian Sol', country: 'Peru' },
-    { code: 'VES', flag: '🇻🇪', name: 'Venezuelan Bolivar', country: 'Venezuela' },
-    { code: 'UYU', flag: '🇺🇾', name: 'Uruguayan Peso', country: 'Uruguay' },
-    { code: 'BOB', flag: '🇧🇴', name: 'Bolivian Boliviano', country: 'Bolivia' },
-    { code: 'PYG', flag: '🇵🇾', name: 'Paraguayan Guarani', country: 'Paraguay' },
-    { code: 'ILS', flag: '🇮🇱', name: 'Israeli Shekel', country: 'Israel' },
-    { code: 'KZT', flag: '🇰🇿', name: 'Kazakhstani Tenge', country: 'Kazakhstan' },
-    { code: 'UZS', flag: '🇺🇿', name: 'Uzbekistani Sum', country: 'Uzbekistan' },
-    { code: 'GEL', flag: '🇬🇪', name: 'Georgian Lari', country: 'Georgia' },
-    { code: 'AMD', flag: '🇦🇲', name: 'Armenian Dram', country: 'Armenia' },
-    { code: 'AZN', flag: '🇦🇿', name: 'Azerbaijani Manat', country: 'Azerbaijan' },
-    { code: 'IRR', flag: '🇮🇷', name: 'Iranian Rial', country: 'Iran' },
-    { code: 'IQD', flag: '🇮🇶', name: 'Iraqi Dinar', country: 'Iraq' },
-    { code: 'LBP', flag: '🇱🇧', name: 'Lebanese Pound', country: 'Lebanon' },
-    { code: 'SYP', flag: '🇸🇾', name: 'Syrian Pound', country: 'Syria' },
-    { code: 'YER', flag: '🇾🇪', name: 'Yemeni Rial', country: 'Yemen' },
-    { code: 'AFN', flag: '🇦🇫', name: 'Afghan Afghani', country: 'Afghanistan' },
-    { code: 'MMK', flag: '🇲🇲', name: 'Myanmar Kyat', country: 'Myanmar' },
-    { code: 'KHR', flag: '🇰🇭', name: 'Cambodian Riel', country: 'Cambodia' },
-    { code: 'LAK', flag: '🇱🇦', name: 'Lao Kip', country: 'Laos' },
-    { code: 'MNT', flag: '🇲🇳', name: 'Mongolian Tugrik', country: 'Mongolia' },
-    { code: 'ETB', flag: '🇪🇹', name: 'Ethiopian Birr', country: 'Ethiopia' },
-    { code: 'TZS', flag: '🇹🇿', name: 'Tanzanian Shilling', country: 'Tanzania' },
-    { code: 'UGX', flag: '🇺🇬', name: 'Ugandan Shilling', country: 'Uganda' },
-    { code: 'RWF', flag: '🇷🇼', name: 'Rwandan Franc', country: 'Rwanda' },
-    { code: 'XOF', flag: '🌍', name: 'West African CFA Franc', country: 'West Africa' },
-    { code: 'XAF', flag: '🌍', name: 'Central African CFA Franc', country: 'Central Africa' },
-    { code: 'MZN', flag: '🇲🇿', name: 'Mozambican Metical', country: 'Mozambique' },
-    { code: 'ZMW', flag: '🇿🇲', name: 'Zambian Kwacha', country: 'Zambia' },
-    { code: 'BWP', flag: '🇧🇼', name: 'Botswana Pula', country: 'Botswana' },
-    { code: 'NAD', flag: '🇳🇦', name: 'Namibian Dollar', country: 'Namibia' },
-    { code: 'MUR', flag: '🇲🇺', name: 'Mauritian Rupee', country: 'Mauritius' },
-    { code: 'SCR', flag: '🇸🇨', name: 'Seychellois Rupee', country: 'Seychelles' },
-    { code: 'CRC', flag: '🇨🇷', name: 'Costa Rican Colon', country: 'Costa Rica' },
-    { code: 'GTQ', flag: '🇬🇹', name: 'Guatemalan Quetzal', country: 'Guatemala' },
-    { code: 'HNL', flag: '🇭🇳', name: 'Honduran Lempira', country: 'Honduras' },
-    { code: 'NIO', flag: '🇳🇮', name: 'Nicaraguan Cordoba', country: 'Nicaragua' },
-    { code: 'PAB', flag: '🇵🇦', name: 'Panamanian Balboa', country: 'Panama' },
-    { code: 'DOP', flag: '🇩🇴', name: 'Dominican Peso', country: 'Dominican Republic' },
-    { code: 'JMD', flag: '🇯🇲', name: 'Jamaican Dollar', country: 'Jamaica' },
-    { code: 'TTD', flag: '🇹🇹', name: 'Trinidad & Tobago Dollar', country: 'Trinidad & Tobago' },
-    { code: 'BBD', flag: '🇧🇧', name: 'Barbadian Dollar', country: 'Barbados' },
-    { code: 'FJD', flag: '🇫🇯', name: 'Fijian Dollar', country: 'Fiji' },
-    { code: 'PGK', flag: '🇵🇬', name: 'Papua New Guinean Kina', country: 'Papua New Guinea' },
-    { code: 'WST', flag: '🇼🇸', name: 'Samoan Tala', country: 'Samoa' },
-];
-
-const POPULAR_CODES = ['USD', 'EUR', 'GBP', 'INR', 'AED', 'SAR', 'KWD', 'JPY', 'AUD', 'SGD', 'CAD', 'THB'];
+const POPULAR_CURRENCY_CODES = POPULAR_CODES;
 
 const StatCard = ({ value, label, color, theme }) => (
     <View style={styles.statCard}>
@@ -156,32 +52,56 @@ export default function ProfileScreen({ navigation }) {
         )
         : CURRENCIES;
 
-    const popularCurrencies = filteredCurrencies.filter(c => POPULAR_CODES.includes(c.code));
-    const otherCurrencies = filteredCurrencies.filter(c => !POPULAR_CODES.includes(c.code));
+    const popularCurrencies = filteredCurrencies.filter(c => POPULAR_CURRENCY_CODES.includes(c.code));
+    const otherCurrencies = filteredCurrencies.filter(c => !POPULAR_CURRENCY_CODES.includes(c.code));
+
+    const [totalSpent, setTotalSpent] = useState(0);
 
     useEffect(() => {
         if (!user) return;
 
-        const q = query(
-            collection(db, 'trips'),
-            where('creatorId', '==', user.uid)
-        );
+        let unsub2 = null;
+        const q1 = query(collection(db, 'trips'), where('travellerEmails', 'array-contains', user.email?.toLowerCase()));
+        const q2 = query(collection(db, 'trips'), where('creatorId', '==', user.uid));
 
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const tripsData = [];
-            querySnapshot.forEach((doc) => {
-                tripsData.push({ id: doc.id, ...doc.data() });
+        const unsub1 = onSnapshot(q1, (snap1) => {
+            const trips1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            if (unsub2) unsub2();
+
+            unsub2 = onSnapshot(q2, (snap2) => {
+                const trips2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                // Merge and dedup
+                const merged = [...trips1];
+                trips2.forEach(t => {
+                    if (!merged.find(m => m.id === t.id)) merged.push(t);
+                });
+
+                merged.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                setTrips(merged);
+
+                let spent = 0;
+                merged.forEach(trip => {
+                    if (trip.status === 'Active') {
+                        spent += (trip.totalSpent || 0);
+                    }
+                });
+                setTotalSpent(spent);
+                setLoadingTrips(false);
+            }, (error) => {
+                console.error('Error fetching creator trips:', error);
+                setLoadingTrips(false);
             });
-            // Manual sort
-            tripsData.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            setTrips(tripsData);
-            setLoadingTrips(false);
         }, (error) => {
-            console.error('Error fetching user trips:', error);
+            console.error('Error fetching shared trips:', error);
             setLoadingTrips(false);
         });
 
-        return () => unsubscribe;
+        return () => {
+            if (unsub1) unsub1();
+            if (unsub2) unsub2();
+        };
     }, [user]);
 
     const handleLogout = async () => {
@@ -193,45 +113,26 @@ export default function ProfileScreen({ navigation }) {
         }
     };
 
-    const pickImage = async () => {
-        // No permissions request is necessary for launching the image library
-        let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: true,
-            aspect: [1, 1],
-            quality: 0.5,
-        });
-
-        if (!result.canceled) {
-            uploadImage(result.assets[0].uri);
-        }
-    };
-
-    const uploadImage = async (uri) => {
-        setUploading(true);
-        try {
-            const response = await fetch(uri);
-            const blob = await response.blob();
-            const storageRef = ref(storage, `profiles/${user.uid}`);
-
-            await uploadBytes(storageRef, blob);
-            const downloadURL = await getDownloadURL(storageRef);
-
-            // Update Auth
-            await updateProfile(firebaseAuth.currentUser, { photoURL: downloadURL });
-
-            // Update Firestore
-            await updateDoc(doc(db, 'users', user.uid), {
-                photoURL: downloadURL
-            });
-
-            Alert.alert('Success', 'Profile picture updated!');
-        } catch (error) {
-            console.error('Upload Error:', error);
-            Alert.alert('Upload Failed', error.message);
-        } finally {
-            setUploading(false);
-        }
+    const handleChangePassword = async () => {
+        Alert.alert(
+            'Change Password',
+            'We will send a password reset link to your email. Do you want to proceed?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Send Email',
+                    onPress: async () => {
+                        try {
+                            await sendPasswordResetEmail(firebaseAuth, user.email);
+                            Alert.alert('Success', 'Password reset email sent!');
+                        } catch (error) {
+                            console.error('Password Reset Error:', error);
+                            Alert.alert('Error', error.message);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const updateDefaultCurrency = async (currencyCode) => {
@@ -274,9 +175,7 @@ export default function ProfileScreen({ navigation }) {
                     {/* Avatar */}
                     <View style={styles.avatarWrapper}>
                         <View style={styles.avatarContainer}>
-                            {uploading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : user?.photoURL ? (
+                            {user?.photoURL ? (
                                 <Image source={{ uri: user.photoURL }} style={styles.avatarImage} />
                             ) : (
                                 <Text style={styles.avatarText}>
@@ -284,9 +183,6 @@ export default function ProfileScreen({ navigation }) {
                                 </Text>
                             )}
                         </View>
-                        <TouchableOpacity style={styles.cameraBtn} onPress={pickImage} disabled={uploading}>
-                            <Ionicons name="camera" size={14} color="#fff" />
-                        </TouchableOpacity>
                     </View>
 
                     {/* Name */}
@@ -313,23 +209,28 @@ export default function ProfileScreen({ navigation }) {
                     <View style={styles.statsRow}>
                         <StatCard value={trips.length} label="Trips" theme={theme} />
                         <View style={styles.statDivider} />
-                        <StatCard value="$0.00" label="Spent" theme={theme} />
+                        <StatCard value={`${defaultCurrency} ${totalSpent.toFixed(0)}`} label="Spent" theme={theme} />
                         <View style={styles.statDivider} />
-                        <StatCard value="$0.00" label="Owed" color="#2DD4BF" theme={theme} />
+                        <StatCard value="--" label="Owed" color="#2DD4BF" theme={theme} />
                     </View>
                 </LinearGradient>
 
                 {/* My Trips */}
                 <View style={styles.section}>
-                    <SectionHeader title="MY TRIPS" theme={theme} />
+                    <View style={styles.sectionHeaderRow}>
+                        <SectionHeader title="MY TRIPS" theme={theme} />
+                        <TouchableOpacity onPress={() => navigation.navigate('MainTabs', { screen: 'Trips' })}>
+                            <Text style={styles.seeAllText}>See All</Text>
+                        </TouchableOpacity>
+                    </View>
                     <View style={[styles.sectionCard, { backgroundColor: theme.cardBg, borderColor: theme.border }]}>
                         {loadingTrips ? (
                             <ActivityIndicator color={COLORS.violet} style={{ padding: 20 }} />
                         ) : trips.length > 0 ? (
-                            trips.map((trip, index) => (
+                            trips.slice(0, 2).map((trip, index, array) => (
                                 <TouchableOpacity
                                     key={trip.id}
-                                    style={[styles.tripItem, index !== trips.length - 1 && styles.rowDivider, { borderBottomColor: theme.border }]}
+                                    style={[styles.tripItem, index !== array.length - 1 && styles.rowDivider, { borderBottomColor: theme.border }]}
                                     activeOpacity={0.7}
                                     onPress={() => navigation.navigate('TripDetail', { trip })}
                                 >
@@ -370,7 +271,11 @@ export default function ProfileScreen({ navigation }) {
                             <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.settingRow} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={styles.settingRow}
+                            activeOpacity={0.7}
+                            onPress={() => navigation.navigate('TripArchive')}
+                        >
                             <View style={[styles.settingIconWrapper, { backgroundColor: 'rgba(45, 212, 191, 0.1)' }]}>
                                 <Ionicons name="archive-outline" size={22} color="#2DD4BF" />
                             </View>
@@ -417,11 +322,51 @@ export default function ProfileScreen({ navigation }) {
                     </View>
                 </View>
 
+                {/* Payment Methods */}
+                <View style={styles.section}>
+                    <SectionHeader title="PAYMENT METHODS" theme={theme} />
+                    <View style={[styles.sectionCard]}>
+                        <View style={[styles.settingRow, styles.rowDivider, { borderBottomColor: theme.border }]}>
+                            <View style={[styles.settingIconWrapper, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
+                                <MaterialCommunityIcons name="flash" size={22} color="#F59E0B" />
+                            </View>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingTitle, { color: theme.textPrimary }]}>UPI ID</Text>
+                                <Text style={[styles.settingSubtitle, { color: theme.textSecondary }]}>
+                                    {user?.upiId || 'Not configured'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => navigation.navigate('EditProfile')}>
+                                <Ionicons name="create-outline" size={18} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.settingRow}>
+                            <View style={[styles.settingIconWrapper, { backgroundColor: 'rgba(0, 112, 186, 0.1)' }]}>
+                                <Ionicons name="logo-paypal" size={22} color="#0070BA" />
+                            </View>
+                            <View style={styles.settingInfo}>
+                                <Text style={[styles.settingTitle, { color: theme.textPrimary }]}>PayPal Username</Text>
+                                <Text style={[styles.settingSubtitle, { color: theme.textSecondary }]}>
+                                    {user?.paypalId || 'Not configured'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => navigation.navigate('EditProfile')}>
+                                <Ionicons name="create-outline" size={18} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+
                 {/* Account & Security */}
                 <View style={styles.section}>
                     <SectionHeader title="ACCOUNT & SECURITY" theme={theme} />
                     <View style={[styles.sectionCard]}>
-                        <TouchableOpacity style={[styles.settingRow, styles.rowDivider, { borderBottomColor: theme.border }]} activeOpacity={0.7}>
+                        <TouchableOpacity
+                            style={[styles.settingRow, styles.rowDivider, { borderBottomColor: theme.border }]}
+                            activeOpacity={0.7}
+                            onPress={handleChangePassword}
+                        >
                             <View style={[styles.settingIconWrapper, { backgroundColor: 'rgba(56, 189, 248, 0.1)' }]}>
                                 <Ionicons name="lock-closed-outline" size={22} color="#38BDF8" />
                             </View>
@@ -506,15 +451,16 @@ export default function ProfileScreen({ navigation }) {
                 </View>
 
                 {/* Bottom Spacer */}
-                <View style={{ height: 100 }} />
-            </ScrollView>
+                <View style={{ height: 40 }} />
+            </ScrollView >
 
             {/* Currency Modal - proper Modal component */}
-            <Modal
+            < Modal
                 visible={showCurrencyModal}
                 transparent
                 animationType="slide"
-                onRequestClose={() => { setShowCurrencyModal(false); setCurrencySearch(''); }}
+                onRequestClose={() => { setShowCurrencyModal(false); setCurrencySearch(''); }
+                }
             >
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
@@ -607,8 +553,8 @@ export default function ProfileScreen({ navigation }) {
                         </ScrollView>
                     </View>
                 </View>
-            </Modal>
-        </View>
+            </Modal >
+        </View >
     );
 }
 
@@ -642,6 +588,8 @@ const styles = StyleSheet.create({
     statDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: SPACING.sm },
     section: { marginHorizontal: SPACING.base, marginTop: 25, marginBottom: 5 },
     sectionTitle: { fontSize: 12, fontWeight: '700', letterSpacing: 1, marginBottom: 12, marginLeft: 4 },
+    sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+    seeAllText: { color: COLORS.violet, fontSize: 13, fontWeight: '700', marginRight: 4 },
     sectionCard: { borderRadius: RADIUS.lg, borderWidth: 1, overflow: 'hidden', backgroundColor: 'rgba(15, 23, 42, 0.6)', borderColor: 'rgba(255, 255, 255, 0.08)' },
     rowDivider: { borderBottomWidth: 1 },
     tripItem: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },

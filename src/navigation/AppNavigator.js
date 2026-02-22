@@ -17,9 +17,11 @@ import ActivityScreen from '../screens/ActivityScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import CreateTripScreen from '../screens/CreateTripScreen';
 import TripDetailScreen from '../screens/TripDetailScreen';
+import DestinationDetailScreen from '../screens/DestinationDetailScreen';
 import OnboardingScreen from '../screens/OnboardingScreen';
 import EditProfileScreen from '../screens/EditProfileScreen';
 import CurrencyConverterScreen from '../screens/CurrencyConverterScreen';
+import TripArchiveScreen from '../screens/TripArchiveScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -120,8 +122,10 @@ export default function AppNavigator() {
                 <Stack.Screen name="MainTabs" component={MainTabs} />
                 <Stack.Screen name="CreateTrip" component={CreateTripScreen} />
                 <Stack.Screen name="TripDetail" component={TripDetailScreen} />
+                <Stack.Screen name="DestinationDetail" component={DestinationDetailScreen} />
                 <Stack.Screen name="EditProfile" component={EditProfileScreen} />
                 <Stack.Screen name="CurrencyConverter" component={CurrencyConverterScreen} />
+                <Stack.Screen name="TripArchive" component={TripArchiveScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

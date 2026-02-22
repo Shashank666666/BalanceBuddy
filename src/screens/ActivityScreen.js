@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS, LIGHT, DARK } from '../constants/theme';
 import { db } from '../config/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 
 const CATEGORIES = ['All', '🏨 Hotel', '🍔 Food', '✈️ Transport', '🎭 Activity'];
@@ -25,29 +25,139 @@ export default function ActivityScreen() {
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
 
+    const [expenses, setExpenses] = useState([]);
+    const [filteredExpenses, setFilteredExpenses] = useState([]);
+
+    // Update last viewed time when screen is mounted
+    useEffect(() => {
+        if (user?.uid) {
+            const userRef = doc(db, 'users', user.uid);
+            updateDoc(userRef, {
+                lastCheckedActivities: serverTimestamp()
+            }).catch(err => console.error('Error updating activity timestamp:', err));
+        }
+    }, [user?.uid]);
+
+    // 1. Listen to trips
     useEffect(() => {
         if (!user) return;
 
-        const q = query(
+        const qTrips = query(
             collection(db, 'trips'),
-            where('creatorId', '==', user.uid)
+            where('travellerEmails', 'array-contains', user.email?.toLowerCase())
         );
 
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const tripsData = [{ id: 'all', name: 'All Trips', icon: '🌎' }];
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                tripsData.push({ id: doc.id, name: data.name, icon: data.icon });
-            });
-            setTrips(tripsData);
+        const unsubscribeTrips = onSnapshot(qTrips, (snap) => {
+            const tripsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setTrips([{ id: 'all', name: 'All Trips', icon: '🌎' }, ...tripsList]);
             setLoading(false);
-        }, (error) => {
-            console.error('Error fetching trips for activity:', error);
+        }, (err) => {
+            console.error('Error fetching trips:', err);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        return () => unsubscribeTrips();
     }, [user]);
+
+    // 2. Listen to expenses for those trips
+    useEffect(() => {
+        if (!user || trips.length === 0) return;
+
+        const allUnsubs = [];
+        const realTrips = trips.filter(t => t.id !== 'all');
+        const destExpUnsubs = new Map(); // Track destination-level listeners
+
+        realTrips.forEach(trip => {
+            // Direct expenses
+            const qExpDirect = query(collection(db, 'trips', trip.id, 'expenses'));
+            allUnsubs.push(onSnapshot(qExpDirect, (expSnap) => {
+                const tripExpenses = expSnap.docs.map(d => ({
+                    id: d.id,
+                    tripId: trip.id,
+                    tripName: trip.name,
+                    source: 'direct',
+                    ...d.data()
+                }));
+
+                setExpenses(prev => {
+                    const otherExpenses = prev.filter(e => e.tripId !== trip.id || e.source !== 'direct');
+                    const combined = [...otherExpenses, ...tripExpenses];
+                    // Final deduplication by ID just in case
+                    const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+                    return unique.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                });
+            }, (err) => console.error('Direct exp error:', err)));
+
+            // Destinations and their expenses
+            const qDest = collection(db, 'trips', trip.id, 'destinations');
+            allUnsubs.push(onSnapshot(qDest, (destSnap) => {
+                const currentDestIds = destSnap.docs.map(d => d.id);
+
+                // Cleanup removed destinations
+                destExpUnsubs.forEach((unsub, id) => {
+                    if (!currentDestIds.includes(id)) {
+                        unsub();
+                        destExpUnsubs.delete(id);
+                        setExpenses(prev => prev.filter(e => e.destinationId !== id));
+                    }
+                });
+
+                destSnap.docs.forEach(destDoc => {
+                    const destId = destDoc.id;
+                    const destName = destDoc.data().name;
+
+                    if (!destExpUnsubs.has(destId)) {
+                        const unsub = onSnapshot(query(collection(db, 'trips', trip.id, 'destinations', destId, 'expenses')), (expSnap) => {
+                            const destExpenses = expSnap.docs.map(d => ({
+                                id: d.id,
+                                tripId: trip.id,
+                                tripName: trip.name,
+                                destinationId: destId,
+                                destinationName: destName,
+                                ...d.data()
+                            }));
+
+                            setExpenses(prev => {
+                                const otherExpenses = prev.filter(e => e.destinationId !== destId);
+                                const combined = [...otherExpenses, ...destExpenses];
+                                const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+                                return unique.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                            });
+                        }, (err) => console.error(`Dest exp error [${destId}]:`, err));
+                        destExpUnsubs.set(destId, unsub);
+                    }
+                });
+            }, (err) => console.error('Dest list error:', err)));
+        });
+
+        return () => {
+            allUnsubs.forEach(u => u());
+            destExpUnsubs.forEach(u => u());
+        };
+    }, [trips, user?.uid]);
+
+    useEffect(() => {
+        let results = expenses;
+
+        if (selectedTripId !== 'all') {
+            results = results.filter(e => e.tripId === selectedTripId);
+        }
+
+        if (selectedCategory !== 'All') {
+            results = results.filter(e => e.category === selectedCategory);
+        }
+
+        if (search.trim()) {
+            results = results.filter(e =>
+                e.title.toLowerCase().includes(search.toLowerCase()) ||
+                e.tripName.toLowerCase().includes(search.toLowerCase())
+            );
+        }
+
+        setFilteredExpenses(results);
+    }, [expenses, selectedTripId, selectedCategory, search]);
+
+    const totalAmount = filteredExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -62,7 +172,7 @@ export default function ActivityScreen() {
                 <View style={styles.headerTop}>
                     <View>
                         <Text style={styles.headerTitle}>Activity</Text>
-                        <Text style={styles.headerSubtitle}>0 expenses · $0 total</Text>
+                        <Text style={styles.headerSubtitle}>{filteredExpenses.length} expenses · {totalAmount.toFixed(2)} total</Text>
                     </View>
                     <TouchableOpacity style={styles.refreshBtn}>
                         <Ionicons name="refresh-outline" size={22} color="#fff" />
@@ -137,11 +247,33 @@ export default function ActivityScreen() {
                             ))}
                         </ScrollView>
 
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="receipt-outline" size={64} color={theme.textMuted} />
-                            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No expenses found</Text>
-                            <Text style={[styles.emptySubtitle, { color: theme.textMuted }]}>Expenses you add to trips will appear here</Text>
-                        </View>
+                        {filteredExpenses.length > 0 ? (
+                            filteredExpenses.map((exp) => (
+                                <View key={exp.id} style={styles.activityCard}>
+                                    <View style={[styles.activityIcon, { backgroundColor: exp.color || COLORS.violet }]}>
+                                        <Text style={{ fontSize: 18 }}>{exp.icon || '💸'}</Text>
+                                    </View>
+                                    <View style={styles.activityInfo}>
+                                        <Text style={styles.activityTitle}>{exp.title}</Text>
+                                        <Text style={styles.activityTrip}>
+                                            {exp.tripName}{exp.destinationName ? ` · ${exp.destinationName}` : ''} · {exp.paidByNickname}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.activityAmountCol}>
+                                        <Text style={styles.activityAmount}>{exp.amount.toFixed(2)}</Text>
+                                        <Text style={styles.activityDate}>
+                                            {exp.createdAt?.seconds ? new Date(exp.createdAt.seconds * 1000).toLocaleDateString() : 'Today'}
+                                        </Text>
+                                    </View>
+                                </View>
+                            ))
+                        ) : (
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="receipt-outline" size={64} color={theme.textMuted} />
+                                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No expenses found</Text>
+                                <Text style={[styles.emptySubtitle, { color: theme.textMuted }]}>Expenses you add to trips will appear here</Text>
+                            </View>
+                        )}
                     </>
                 )}
             </ScrollView>
@@ -177,7 +309,64 @@ const styles = StyleSheet.create({
     categoryContent: { gap: SPACING.sm, paddingRight: SPACING.sm },
     categoryTab: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: RADIUS.full, borderWidth: 1 },
     categoryText: { fontSize: 13, fontWeight: '500' },
-    emptyContainer: { alignItems: 'center', marginTop: 60, paddingHorizontal: 40 },
-    emptyText: { fontSize: 18, fontWeight: '700', marginTop: 20 },
-    emptySubtitle: { fontSize: 14, textAlign: 'center', marginTop: 8 },
+    activityCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: 'rgba(15, 23, 42, 0.6)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+        marginBottom: 12,
+    },
+    activityIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+    },
+    activityInfo: {
+        flex: 1,
+    },
+    activityTitle: {
+        color: '#fff',
+        fontSize: 15,
+        fontWeight: '700',
+    },
+    activityTrip: {
+        color: 'rgba(255, 255, 255, 0.4)',
+        fontSize: 12,
+        marginTop: 2,
+    },
+    activityAmountCol: {
+        alignItems: 'flex-end',
+    },
+    activityAmount: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    activityDate: {
+        color: 'rgba(255, 255, 255, 0.3)',
+        fontSize: 10,
+        marginTop: 4,
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 100,
+    },
+    emptyText: {
+        fontSize: 18,
+        fontWeight: '700',
+        marginTop: 20,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        marginTop: 8,
+        textAlign: 'center',
+        paddingHorizontal: 40,
+    },
 });

@@ -1,32 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, TouchableOpacity, StyleSheet, ScrollView,
-    StatusBar, TextInput, Dimensions, ActivityIndicator, Alert
+    StatusBar, TextInput, Dimensions, ActivityIndicator, Alert, Modal
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, DARK } from '../constants/theme';
+import { CURRENCIES as ALL_CURRENCIES } from '../constants/currencies';
 
 const { width } = Dimensions.get('window');
 
-const CURRENCIES = [
-    { code: 'USD', flag: '🇺🇸', name: 'US Dollar' },
-    { code: 'EUR', flag: '🇪🇺', name: 'Euro' },
-    { code: 'GBP', flag: '🇬🇧', name: 'British Pound' },
-    { code: 'INR', flag: '🇮🇳', name: 'Indian Rupee' },
-    { code: 'JPY', flag: '🇯🇵', name: 'Japanese Yen' },
-    { code: 'AUD', flag: '🇦🇺', name: 'Australian Dollar' },
-    { code: 'SGD', flag: '🇸🇬', name: 'Singapore Dollar' },
-    { code: 'THB', flag: '🇹🇭', name: 'Thai Baht' },
-];
+const CURRENCIES = ALL_CURRENCIES;
 
-export default function CurrencyConverterScreen({ navigation }) {
+export default function CurrencyConverterScreen({ navigation, route }) {
     const [amount, setAmount] = useState('1');
-    const [fromCurr, setFromCurr] = useState('USD');
-    const [toCurr, setToCurr] = useState('EUR');
+    const [fromCurr, setFromCurr] = useState(route.params?.fromCurr || 'USD');
+    const [toCurr, setToCurr] = useState(route.params?.toCurr || 'EUR');
     const [rates, setRates] = useState(null);
     const [loading, setLoading] = useState(true);
     const [lastUpdated, setLastUpdated] = useState(null);
+    const [showModal, setShowModal] = useState(false);
+    const [modalType, setModalType] = useState('from'); // 'from' or 'to'
+    const [searchQuery, setSearchQuery] = useState('');
+
+    // Ensure we have flags for passed currencies if they aren't in CURRENCIES
+    useEffect(() => {
+        if (route.params?.fromCurr) setFromCurr(route.params.fromCurr);
+        if (route.params?.toCurr) setToCurr(route.params.toCurr);
+    }, [route.params]);
 
     useEffect(() => {
         fetchRates();
@@ -34,28 +35,28 @@ export default function CurrencyConverterScreen({ navigation }) {
 
     const fetchRates = async () => {
         setLoading(true);
-        const API_KEY = '0c65db1ed39247c720952a990c228cc4';
         try {
-            // Using exchangerate.host with the provided API key
-            const response = await fetch(`http://api.exchangerate.host/live?access_key=${API_KEY}&source=${fromCurr}`);
+            const response = await fetch(`https://api.frankfurter.app/latest?from=${fromCurr}`);
+
+            if (!response.ok) {
+                if (response.status === 404 || response.status === 422) {
+                    throw new Error(`${fromCurr} is not supported by this provider yet. Frankfurt supports ~30 major currencies.`);
+                }
+                throw new Error('Failed to fetch rates');
+            }
+
             const data = await response.json();
 
-            if (data.success) {
-                // exchangerate.host live output is { quotes: { SOURCECURR: RATE } }
-                // We need to transform quotes e.g. "USDGBP": 0.8 to { "GBP": 0.8 }
-                const transformedRates = {};
-                Object.keys(data.quotes).forEach(key => {
-                    const currencyCode = key.replace(fromCurr, '');
-                    transformedRates[currencyCode] = data.quotes[key];
-                });
-                setRates(transformedRates);
-                setLastUpdated(new Date(data.timestamp * 1000).toLocaleString());
+            if (data.rates) {
+                // Frankfurt doesn't include the base currency in rates, add it for convenience
+                setRates({ ...data.rates, [fromCurr]: 1.0 });
+                setLastUpdated(data.date);
             } else {
-                Alert.alert('Error', data.error?.info || 'Failed to fetch exchange rates');
+                throw new Error('Invalid data format received');
             }
         } catch (error) {
             console.error(error);
-            Alert.alert('Error', 'Network error while fetching rates');
+            Alert.alert('Currency Provider Error', error.message || 'Network error while fetching rates');
         } finally {
             setLoading(false);
         }
@@ -106,7 +107,7 @@ export default function CurrencyConverterScreen({ navigation }) {
                         />
                         <TouchableOpacity
                             style={styles.currencySelector}
-                            onPress={() => {/* In a real app, show a picker */ }}
+                            onPress={() => { setModalType('from'); setShowModal(true); }}
                         >
                             <Text style={styles.flag}>{getFlag(fromCurr)}</Text>
                             <Text style={styles.currCode}>{fromCurr}</Text>
@@ -133,7 +134,7 @@ export default function CurrencyConverterScreen({ navigation }) {
                         </View>
                         <TouchableOpacity
                             style={styles.currencySelector}
-                            onPress={() => {/* In a real app, show a picker */ }}
+                            onPress={() => { setModalType('to'); setShowModal(true); }}
                         >
                             <Text style={styles.flag}>{getFlag(toCurr)}</Text>
                             <Text style={styles.currCode}>{toCurr}</Text>
@@ -143,11 +144,30 @@ export default function CurrencyConverterScreen({ navigation }) {
                     {loading && <ActivityIndicator color="#0EA5E9" style={{ marginTop: 20 }} />}
 
                     {!loading && rates && (
-                        <View style={styles.infoRow}>
-                            <Ionicons name="information-circle-outline" size={14} color="rgba(255,255,255,0.4)" />
-                            <Text style={styles.infoText}>
-                                1 {fromCurr} = {rates[toCurr]?.toFixed(4)} {toCurr}
-                            </Text>
+                        <View style={styles.comparisonSection}>
+                            <View style={styles.infoRow}>
+                                <Ionicons name="information-circle-outline" size={14} color="rgba(255,255,255,0.4)" />
+                                <Text style={styles.infoText}>
+                                    1 {fromCurr} = {rates[toCurr]?.toFixed(4)} {toCurr}
+                                </Text>
+                            </View>
+
+                            <View style={styles.comparisonHeader}>
+                                <View style={styles.comparisonLine} />
+                                <Text style={styles.comparisonTitle}>VALUATION COMPARISON</Text>
+                                <View style={styles.comparisonLine} />
+                            </View>
+
+                            <View style={styles.comparisonGrid}>
+                                {['USD', 'EUR', 'GBP', 'JPY'].filter(c => c !== fromCurr && c !== toCurr).map(curr => (
+                                    <View key={curr} style={styles.comparisonItem}>
+                                        <Text style={styles.comparisonLabel}>{curr}</Text>
+                                        <Text style={styles.comparisonValue}>
+                                            {(parseFloat(amount || 0) * (rates[curr] || 0)).toFixed(2)}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
                         </View>
                     )}
                 </View>
@@ -164,7 +184,7 @@ export default function CurrencyConverterScreen({ navigation }) {
                             <Text style={styles.gridFlag}>{item.flag}</Text>
                             <Text style={styles.gridCode}>{item.code}</Text>
                             <Text style={styles.gridRate}>
-                                {rates ? rates[item.code]?.toFixed(2) : '--'}
+                                {rates ? (parseFloat(amount || 0) * (rates[item.code] || 0)).toFixed(2) : '--'}
                             </Text>
                         </TouchableOpacity>
                     ))}
@@ -174,6 +194,58 @@ export default function CurrencyConverterScreen({ navigation }) {
                     <Text style={styles.updatedAt}>Last updated: {lastUpdated}</Text>
                 )}
             </ScrollView>
+
+            {/* Currency Selection Modal */}
+            <Modal visible={showModal} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Select {modalType === 'from' ? 'Source' : 'Target'} Currency</Text>
+                            <TouchableOpacity onPress={() => { setShowModal(false); setSearchQuery(''); }}>
+                                <Ionicons name="close" size={24} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.searchBar}>
+                            <Ionicons name="search" size={18} color="rgba(255,255,255,0.4)" />
+                            <TextInput
+                                style={styles.searchInput}
+                                placeholder="Search currency name or code..."
+                                placeholderTextColor="rgba(255,255,255,0.3)"
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                            />
+                        </View>
+
+                        <ScrollView style={{ maxHeight: 500 }}>
+                            {CURRENCIES.filter(c =>
+                                c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                            ).map(item => (
+                                <TouchableOpacity
+                                    key={item.code}
+                                    style={[
+                                        styles.modalItem,
+                                        (modalType === 'from' ? fromCurr : toCurr) === item.code && styles.modalItemActive
+                                    ]}
+                                    onPress={() => {
+                                        if (modalType === 'from') setFromCurr(item.code);
+                                        else setToCurr(item.code);
+                                        setShowModal(false);
+                                        setSearchQuery('');
+                                    }}
+                                >
+                                    <Text style={styles.modalFlag}>{item.flag}</Text>
+                                    <View>
+                                        <Text style={styles.modalCode}>{item.code}</Text>
+                                        <Text style={styles.modalName}>{item.name}</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -258,4 +330,116 @@ const styles = StyleSheet.create({
     gridRate: { color: '#fff', fontSize: 15, fontWeight: '800' },
 
     updatedAt: { color: 'rgba(255,255,255,0.2)', fontSize: 10, textAlign: 'center', marginTop: 30, fontStyle: 'italic' },
+
+    // Comparison Styles
+    comparisonSection: {
+        marginTop: 20,
+    },
+    comparisonHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginVertical: 15,
+        gap: 10,
+    },
+    comparisonLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+    },
+    comparisonTitle: {
+        color: 'rgba(255,255,255,0.25)',
+        fontSize: 9,
+        fontWeight: '800',
+        letterSpacing: 1,
+    },
+    comparisonGrid: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    comparisonItem: {
+        flex: 1,
+        backgroundColor: 'rgba(255,255,255,0.02)',
+        padding: 10,
+        borderRadius: 12,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    comparisonLabel: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 10,
+        fontWeight: '700',
+        marginBottom: 4,
+    },
+    comparisonValue: {
+        color: '#fff',
+        fontSize: 13,
+        fontWeight: '800',
+    },
+
+    // Modal Styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#1E293B',
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
+        padding: 24,
+        paddingBottom: 40,
+        maxHeight: '90%',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    modalTitle: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: '800',
+    },
+    searchBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        height: 48,
+        marginBottom: 20,
+    },
+    searchInput: {
+        flex: 1,
+        color: '#fff',
+        marginLeft: 10,
+        fontSize: 15,
+    },
+    modalItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        marginBottom: 4,
+    },
+    modalItemActive: {
+        backgroundColor: 'rgba(14, 165, 233, 0.15)',
+    },
+    modalFlag: {
+        fontSize: 24,
+        marginRight: 16,
+    },
+    modalCode: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '700',
+    },
+    modalName: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 12,
+    },
 });

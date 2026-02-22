@@ -14,10 +14,10 @@ import {
     ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS, LIGHT, DARK } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { updateProfile } from 'firebase/auth';
 import { db, auth as firebaseAuth } from '../config/firebase';
 
@@ -28,7 +28,26 @@ export default function EditProfileScreen({ navigation }) {
 
     const { user } = useAuth();
     const [displayName, setDisplayName] = useState(user?.displayName || '');
+    const [upiId, setUpiId] = useState('');
+    const [paypalId, setPaypalId] = useState('');
     const [loading, setLoading] = useState(false);
+
+    React.useEffect(() => {
+        const fetchPaymentData = async () => {
+            try {
+                const userRef = doc(db, 'users', user.uid);
+                const userSnap = await getDoc(userRef);
+                if (userSnap.exists()) {
+                    const data = userSnap.data();
+                    setUpiId(data.upiId || '');
+                    setPaypalId(data.paypalId || '');
+                }
+            } catch (error) {
+                console.error('Error fetching payment data:', error);
+            }
+        };
+        if (user?.uid) fetchPaymentData();
+    }, [user?.uid]);
 
     const handleSave = async () => {
         if (!displayName.trim()) {
@@ -45,6 +64,8 @@ export default function EditProfileScreen({ navigation }) {
             const userRef = doc(db, 'users', user.uid);
             await updateDoc(userRef, {
                 displayName: displayName.trim(),
+                upiId: upiId.trim(),
+                paypalId: paypalId.trim(),
             });
 
             Alert.alert('Success', 'Profile updated successfully!', [
@@ -115,6 +136,39 @@ export default function EditProfileScreen({ navigation }) {
                         </View>
                         <Text style={[styles.infoText, { color: theme.textMuted }]}>
                             Email cannot be changed for security reasons.
+                        </Text>
+                    </View>
+
+                    <View style={styles.section}>
+                        <Text style={[styles.label, { color: theme.textSecondary }]}>PAYMENT HANDLES</Text>
+
+                        {/* UPI ID */}
+                        <View style={[styles.inputWrapper, { backgroundColor: 'rgba(30, 41, 59, 0.4)', borderColor: 'rgba(255, 255, 255, 0.08)', marginBottom: 15 }]}>
+                            <MaterialCommunityIcons name="qrcode" size={20} color={theme.textMuted} />
+                            <TextInput
+                                style={[styles.input, { color: theme.textPrimary }]}
+                                value={upiId}
+                                onChangeText={setUpiId}
+                                placeholder="UPI ID (e.g. user@upi)"
+                                placeholderTextColor={theme.textMuted}
+                                autoCapitalize="none"
+                            />
+                        </View>
+
+                        {/* PayPal */}
+                        <View style={[styles.inputWrapper, { backgroundColor: 'rgba(30, 41, 59, 0.4)', borderColor: 'rgba(255, 255, 255, 0.08)' }]}>
+                            <Ionicons name="logo-paypal" size={20} color={theme.textMuted} />
+                            <TextInput
+                                style={[styles.input, { color: theme.textPrimary }]}
+                                value={paypalId}
+                                onChangeText={setPaypalId}
+                                placeholder="PayPal UserName (e.g. shashank666)"
+                                placeholderTextColor={theme.textMuted}
+                                autoCapitalize="none"
+                            />
+                        </View>
+                        <Text style={[styles.infoText, { color: theme.textMuted }]}>
+                            These details will be shown to your friends when they need to pay you back.
                         </Text>
                     </View>
 

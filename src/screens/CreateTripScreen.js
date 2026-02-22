@@ -35,83 +35,38 @@ export default function CreateTripScreen({ navigation }) {
 
     // State for Trip Details
     const [tripName, setTripName] = useState('');
-    const [destination, setDestination] = useState('');
     const [selectedIcon, setSelectedIcon] = useState('🗼');
-    const [baseCurrency, setBaseCurrency] = useState('USD');
-    const [availableCurrencies, setAvailableCurrencies] = useState(DEFAULT_CURRENCIES);
-    const [tripStatus, setTripStatus] = useState('Active'); // Active or Planning
-    const [budget, setBudget] = useState('');
-    const [isDetectingCurrency, setIsDetectingCurrency] = useState(false);
+    const [tripStatus, setTripStatus] = useState('Active');
 
     // Dates
     const [startDate, setStartDate] = useState(new Date());
     const [endDate, setEndDate] = useState(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [selectingType, setSelectingType] = useState('start'); // 'start' or 'end'
+    const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
+    const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
 
     // Exchange Rate
     const [liveRate, setLiveRate] = useState(null);
     const defaultCurrency = user?.defaultCurrency || 'USD';
 
-    // Auto-detect Currency based on Destination
-    useEffect(() => {
-        if (!destination || destination.length < 3) return;
 
-        const timer = setTimeout(async () => {
-            setIsDetectingCurrency(true);
-            try {
-                // Try to find the country/city currency using RestCountries API
-                const res = await fetch(`https://restcountries.com/v3.1/name/${destination.trim()}`);
-                const countries = await res.json();
-
-                if (countries && countries[0] && countries[0].currencies) {
-                    const currencyCode = Object.keys(countries[0].currencies)[0];
-                    if (currencyCode) {
-                        setBaseCurrency(currencyCode);
-                        // Add to available if not present
-                        if (!availableCurrencies.find(c => c.value === currencyCode)) {
-                            const flag = countries[0].flag || '🌐';
-                            setAvailableCurrencies(prev => [{ label: `${flag} ${currencyCode}`, value: currencyCode }, ...prev]);
-                        }
-                    }
-                }
-            } catch (err) {
-                console.log('Currency detection failed:', err);
-            } finally {
-                setIsDetectingCurrency(false);
-            }
-        }, 800);
-
-        return () => clearTimeout(timer);
-    }, [destination]);
-
-    // Fetch Live Rate between Default and Destination
-    useEffect(() => {
-        const fetchLiveRate = async () => {
-            if (!baseCurrency || baseCurrency === defaultCurrency) {
-                setLiveRate(null);
-                return;
-            }
-            const API_KEY = '0c65db1ed39247c720952a990c228cc4';
-            try {
-                const res = await fetch(`http://api.exchangerate.host/live?access_key=${API_KEY}&source=${defaultCurrency}`);
-                const data = await res.json();
-                if (data.success) {
-                    const quoteKey = `${defaultCurrency}${baseCurrency}`;
-                    const rate = data.quotes[quoteKey];
-                    if (rate) setLiveRate(rate);
-                }
-            } catch (err) {
-                console.log('Live rate fetch failed:', err);
-            }
-        };
-        fetchLiveRate();
-    }, [baseCurrency, defaultCurrency]);
 
     // State for Travellers
-    const [travellers, setTravellers] = useState([
-        { name: 'You (You)', email: 'me@splitmate.app', isYou: true, color: COLORS.avatarM, letter: 'ME' }
-    ]);
+    const [travellers, setTravellers] = useState([]);
+
+    useEffect(() => {
+        if (user && travellers.length === 0) {
+            const userName = user.displayName || user.email?.split('@')[0] || 'You';
+            setTravellers([{
+                name: userName,
+                email: user.email || '',
+                color: COLORS.avatarM,
+                letter: userName.substring(0, 2).toUpperCase()
+            }]);
+        }
+    }, [user]);
+
     const [showAddForm, setShowAddForm] = useState(false);
     const [newTraveller, setNewTraveller] = useState({ name: '', email: '', currency: 'EUR', paymentModes: ['Cash'] });
 
@@ -129,7 +84,9 @@ export default function CreateTripScreen({ navigation }) {
     };
 
     const removeTraveller = (index) => {
-        if (!travellers[index].isYou) {
+        const t = travellers[index];
+        const isMe = t.email && t.email.toLowerCase() === user.email?.toLowerCase();
+        if (!isMe) {
             setTravellers(travellers.filter((_, i) => i !== index));
         }
     };
@@ -153,24 +110,23 @@ export default function CreateTripScreen({ navigation }) {
         try {
             const tripData = {
                 name: tripName,
-                destination: destination,
                 icon: selectedIcon,
-                baseCurrency: baseCurrency,
                 status: tripStatus,
                 startDate: startDate.toISOString(),
                 endDate: endDate.toISOString(),
-                budget: parseFloat(budget) || 0,
                 travellers: travellers,
+                travellerEmails: travellers.map(t => t.email?.toLowerCase()).filter(e => e),
                 creatorId: user.uid,
                 createdAt: serverTimestamp(),
-                // Initial stats
+                destination: 'No location',
+                baseCurrency: user.defaultCurrency || 'USD',
                 totalSpent: 0,
-                userBalance: 0,
+                budget: 0,
             };
 
             const docRef = await addDoc(collection(db, 'trips'), tripData);
             console.log('Trip created with ID: ', docRef.id);
-            navigation.replace('MainTabs'); // Go to Home
+            navigation.replace('TripDetail', { trip: { id: docRef.id, ...tripData } });
         } catch (error) {
             console.error('Error adding document: ', error);
             Alert.alert('Error', 'Failed to create trip. Please try again.');
@@ -284,109 +240,67 @@ export default function CreateTripScreen({ navigation }) {
                         style={styles.premiumInput}
                         value={tripName}
                         onChangeText={setTripName}
-                        placeholder="e.g. Summer in Tokyo"
+                        placeholder="e.g. Euro Trip 2026"
                         placeholderTextColor={COLORS.textMuted}
                     />
-                </View>
-
-                <Text style={[styles.inputLabel, { marginTop: 20 }]}>DESTINATION</Text>
-                <View style={styles.inputWrapper}>
-                    <Ionicons name="location-outline" size={18} color={COLORS.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.premiumInput}
-                        value={destination}
-                        onChangeText={setDestination}
-                        placeholder="Where are you heading?"
-                        placeholderTextColor={COLORS.textMuted}
-                    />
-                    {liveRate && (
-                        <View style={styles.liveRateBadge}>
-                            <Text style={styles.liveRateText}>1 {defaultCurrency} ≈ {liveRate.toFixed(2)} {baseCurrency}</Text>
-                        </View>
-                    )}
                 </View>
             </View>
 
-
-            {/* Logistics Section */}
+            {/* Status & Dates Section */}
             <View style={[styles.glassCard, { marginTop: 20 }]}>
-                <Text style={styles.inputLabel}>CURRENCY & BUDGET</Text>
-                <View style={styles.currencySelectorContainer}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.currencyScrollView}>
-                        {isDetectingCurrency && (
-                            <View style={styles.detectingChip}>
-                                <ActivityIndicator size="small" color="#0EA5E9" />
-                            </View>
-                        )}
-                        {availableCurrencies.map(c => (
-                            <TouchableOpacity
-                                key={c.value}
-                                onPress={() => setBaseCurrency(c.value)}
-                                style={[styles.premiumCurrencyChip, baseCurrency === c.value && styles.premiumCurrencyChipActive]}
-                            >
-                                <Text style={[styles.currencyFlag, baseCurrency === c.value && styles.currencyFlagActive]}>{c.label.split(' ')[0]}</Text>
-                                <Text style={[styles.currencyCode, baseCurrency === c.value && styles.currencyCodeActive]}>{c.value}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
-
-                <View style={[styles.inputWrapper, { marginTop: 15 }]}>
-                    <Ionicons name="cash-outline" size={18} color={COLORS.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.premiumInput}
-                        value={budget}
-                        onChangeText={setBudget}
-                        keyboardType="numeric"
-                        placeholder="Enter total budget (optional)"
-                        placeholderTextColor={COLORS.textMuted}
-                    />
-                    <Text style={styles.currencySuffix}>{baseCurrency}</Text>
-                </View>
-
-                <Text style={[styles.inputLabel, { marginTop: 25 }]}>TRIP STATUS & DATES</Text>
-                <View style={styles.statusToggleGroup}>
+                <Text style={styles.inputLabel}>TRIP DATES</Text>
+                <View style={styles.datePickerRow}>
                     <TouchableOpacity
-                        style={[styles.statusOption, tripStatus === 'Active' && styles.statusOptionActive]}
+                        style={[styles.dateSelectionBox, selectingType === 'start' && styles.dateSelectionBoxActive]}
                         onPress={() => {
-                            setTripStatus('Active');
                             setSelectingType('start');
                             setShowDatePicker(true);
                         }}
                     >
-                        <LinearGradient
-                            colors={tripStatus === 'Active' ? ['#0EA5E9', '#2DD4BF'] : ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.05)']}
-                            style={styles.statusIcon}
-                        >
-                            <Ionicons name="airplane" size={18} color={tripStatus === 'Active' ? '#fff' : 'rgba(255,255,255,0.4)'} />
-                        </LinearGradient>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.statusTitle, tripStatus === 'Active' && styles.statusTitleActive]}>Travelling Now</Text>
-                            <Text style={styles.statusSub}>{startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}</Text>
-                        </View>
-                        {tripStatus === 'Active' && <Ionicons name="calendar-outline" size={16} color="#fff" style={{ opacity: 0.6 }} />}
+                        <Text style={styles.dateTypeLabel}>START DATE</Text>
+                        <Text style={styles.dateValueText}>
+                            {startDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                        </Text>
+                        <Ionicons name="calendar-outline" size={14} color={selectingType === 'start' ? '#fff' : 'rgba(255,255,255,0.4)'} />
                     </TouchableOpacity>
 
+                    <View style={styles.dateDivider}>
+                        <Ionicons name="arrow-forward" size={16} color="rgba(255,255,255,0.2)" />
+                    </View>
+
                     <TouchableOpacity
-                        style={[styles.statusOption, tripStatus === 'Planning' && styles.statusOptionActive]}
+                        style={[styles.dateSelectionBox, selectingType === 'end' && styles.dateSelectionBoxActive]}
                         onPress={() => {
-                            setTripStatus('Planning');
-                            setSelectingType('start');
+                            setSelectingType('end');
                             setShowDatePicker(true);
                         }}
                     >
-                        <LinearGradient
-                            colors={tripStatus === 'Planning' ? ['#6366F1', '#A855F7'] : ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.05)']}
-                            style={styles.statusIcon}
-                        >
-                            <Ionicons name="calendar" size={18} color={tripStatus === 'Planning' ? '#fff' : 'rgba(255,255,255,0.4)'} />
-                        </LinearGradient>
-                        <View style={{ flex: 1 }}>
-                            <Text style={[styles.statusTitle, tripStatus === 'Planning' && styles.statusTitleActive]}>Just Planning</Text>
-                            <Text style={styles.statusSub}>Set date range</Text>
-                        </View>
-                        {tripStatus === 'Planning' && <Ionicons name="chevron-forward" size={16} color="#fff" style={{ opacity: 0.6 }} />}
+                        <Text style={styles.dateTypeLabel}>END DATE</Text>
+                        <Text style={styles.dateValueText}>
+                            {endDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                        </Text>
+                        <Ionicons name="calendar-outline" size={14} color={selectingType === 'end' ? '#fff' : 'rgba(255,255,255,0.4)'} />
                     </TouchableOpacity>
+                </View>
+
+                <View style={[styles.inputGroup, { marginTop: 20 }]}>
+                    <Text style={styles.inputLabel}>TRIP STATUS</Text>
+                    <View style={styles.statusToggleGrid}>
+                        <TouchableOpacity
+                            style={[styles.statusToggleBtn, tripStatus === 'Active' && styles.statusToggleBtnActive]}
+                            onPress={() => setTripStatus('Active')}
+                        >
+                            <Ionicons name="airplane" size={16} color={tripStatus === 'Active' ? '#fff' : 'rgba(255,255,255,0.4)'} />
+                            <Text style={[styles.statusToggleText, tripStatus === 'Active' && styles.statusToggleTextActive]}>Travelling</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.statusToggleBtn, tripStatus === 'Planning' && styles.statusToggleBtnActive]}
+                            onPress={() => setTripStatus('Planning')}
+                        >
+                            <Ionicons name="map" size={16} color={tripStatus === 'Planning' ? '#fff' : 'rgba(255,255,255,0.4)'} />
+                            <Text style={[styles.statusToggleText, tripStatus === 'Planning' && styles.statusToggleTextActive]}>Planning</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </View>
 
@@ -412,48 +326,121 @@ export default function CreateTripScreen({ navigation }) {
                 </LinearGradient>
             </TouchableOpacity>
 
-            {/* Simple Date Picker Modal */}
-            <Modal visible={showDatePicker} transparent animationType="slide">
+            {/* Premium Date Picker Modal */}
+            <Modal visible={showDatePicker} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modalContent}>
                         <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Select {selectingType === 'start' ? 'Departure' : 'Return'} Date</Text>
-                            <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                            <View>
+                                <Text style={styles.modalTitle}>
+                                    {selectingType === 'start' ? 'Start Date' : 'End Date'}
+                                </Text>
+                                <Text style={styles.modalSubtitle}>
+                                    {selectingType === 'start' ? 'When does the journey begin?' : 'When are you heading back?'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setShowDatePicker(false)} style={styles.modalCloseBtn}>
                                 <Ionicons name="close" size={24} color="#fff" />
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.calendarPlaceholder}>
-                            <Ionicons name="calendar" size={64} color="rgba(255,255,255,0.1)" />
-                            <Text style={styles.calendarNote}>Select date for {selectingType === 'start' ? 'Departure' : 'Return'}</Text>
+                        {/* Calendar Component */}
+                        <View style={styles.calendarContainer}>
+                            <View style={styles.calendarHeader}>
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        let m = currentMonth - 1;
+                                        let y = currentYear;
+                                        if (m < 0) { m = 11; y--; }
+                                        setCurrentMonth(m);
+                                        setCurrentYear(y);
+                                    }}
+                                    style={styles.navBtn}
+                                >
+                                    <Ionicons name="chevron-back" size={20} color="#fff" />
+                                </TouchableOpacity>
+                                <Text style={styles.monthLabel}>
+                                    {new Date(currentYear, currentMonth).toLocaleString('default', { month: 'long', year: 'numeric' })}
+                                </Text>
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        let m = currentMonth + 1;
+                                        let y = currentYear;
+                                        if (m > 11) { m = 0; y++; }
+                                        setCurrentMonth(m);
+                                        setCurrentYear(y);
+                                    }}
+                                    style={styles.navBtn}
+                                >
+                                    <Ionicons name="chevron-forward" size={20} color="#fff" />
+                                </TouchableOpacity>
+                            </View>
 
-                            <View style={styles.dateSelectorGrid}>
-                                {[7, 14, 21, 30].map(days => {
-                                    const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-                                    return (
-                                        <TouchableOpacity
-                                            key={days}
-                                            style={styles.dateQuickOption}
-                                            onPress={() => {
-                                                if (selectingType === 'start') setStartDate(d);
-                                                else setEndDate(d);
-                                                setShowDatePicker(false);
-                                            }}
-                                        >
-                                            <Text style={styles.quickDay}>{d.getDate()}</Text>
-                                            <Text style={styles.quickMonth}>{d.toLocaleString('default', { month: 'short' })}</Text>
-                                        </TouchableOpacity>
-                                    );
-                                })}
+                            <View style={styles.weekDaysRow}>
+                                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                                    <Text key={i} style={styles.weekDayText}>{d}</Text>
+                                ))}
+                            </View>
+
+                            <View style={styles.daysGrid}>
+                                {(() => {
+                                    const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+                                    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+                                    const days = [];
+
+                                    for (let i = 0; i < firstDay; i++) {
+                                        days.push(<View key={`empty-${i}`} style={styles.dayCell} />);
+                                    }
+
+                                    for (let d = 1; d <= daysInMonth; d++) {
+                                        const dateObj = new Date(currentYear, currentMonth, d);
+                                        const isSelected = selectingType === 'start'
+                                            ? startDate.toDateString() === dateObj.toDateString()
+                                            : endDate.toDateString() === dateObj.toDateString();
+                                        const isToday = new Date().toDateString() === dateObj.toDateString();
+
+                                        days.push(
+                                            <TouchableOpacity
+                                                key={d}
+                                                style={[styles.dayCell, isSelected && styles.dayCellSelected]}
+                                                onPress={() => {
+                                                    if (selectingType === 'start') {
+                                                        setStartDate(dateObj);
+                                                        if (endDate < dateObj) setEndDate(new Date(dateObj.getTime() + 7 * 24 * 60 * 60 * 1000));
+                                                    } else {
+                                                        if (dateObj < startDate) {
+                                                            Alert.alert('Invalid Date', 'End date cannot be before start date');
+                                                            return;
+                                                        }
+                                                        setEndDate(dateObj);
+                                                    }
+                                                    setShowDatePicker(false);
+                                                }}
+                                            >
+                                                <Text style={[
+                                                    styles.dayText,
+                                                    isSelected && styles.dayTextSelected,
+                                                    isToday && !isSelected && styles.dayTextToday
+                                                ]}>{d}</Text>
+                                                {isToday && !isSelected && <View style={styles.todayIndicator} />}
+                                            </TouchableOpacity>
+                                        );
+                                    }
+                                    return days;
+                                })()}
                             </View>
                         </View>
 
-                        <TouchableOpacity
-                            style={styles.modalCloseBtn}
-                            onPress={() => setShowDatePicker(false)}
-                        >
-                            <Text style={styles.modalCloseText}>Done</Text>
-                        </TouchableOpacity>
+                        <View style={styles.modalFooter}>
+                            <TouchableOpacity
+                                style={styles.confirmModalBtn}
+                                onPress={() => setShowDatePicker(false)}
+                            >
+                                <LinearGradient colors={['#0EA5E9', '#2DD4BF']} style={styles.confirmModalGradient}>
+                                    <Text style={styles.confirmModalText}>Confirm Date</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </View>
                     </View>
                 </View>
             </Modal>
@@ -489,7 +476,7 @@ export default function CreateTripScreen({ navigation }) {
                     </View>
                     {t.isYou ? (
                         <View style={styles.organizerIndicator}>
-                            <Ionicons name="crown" size={12} color="#F59E0B" />
+                            <MaterialCommunityIcons name="crown" size={14} color="#F59E0B" />
                         </View>
                     ) : (
                         <TouchableOpacity onPress={() => removeTraveller(i)} style={styles.removeIconBtn}>
@@ -607,8 +594,10 @@ export default function CreateTripScreen({ navigation }) {
                     <View style={styles.ticketHeaderText}>
                         <Text style={styles.ticketTitle}>{tripName}</Text>
                         <View style={styles.locationTag}>
-                            <Ionicons name="location" size={10} color="#38BDF8" />
-                            <Text style={styles.locationTabText}>{destination || 'Worldwide'}</Text>
+                            <Ionicons name="calendar" size={10} color="#38BDF8" />
+                            <Text style={styles.locationTabText}>
+                                {startDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })} - {endDate.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                            </Text>
                         </View>
                     </View>
                     <View style={styles.ticketStatus}>
@@ -626,12 +615,14 @@ export default function CreateTripScreen({ navigation }) {
                 <View style={styles.ticketBody}>
                     <View style={styles.infoGrid}>
                         <View style={styles.infoBox}>
-                            <Text style={styles.infoLabel}>BUDGET</Text>
-                            <Text style={styles.infoValue}>{budget ? `${baseCurrency} ${budget}` : 'No limit'}</Text>
+                            <Text style={styles.infoLabel}>DESTINATIONS</Text>
+                            <Text style={styles.infoValue}>Add after creating</Text>
                         </View>
                         <View style={styles.infoBox}>
                             <Text style={styles.infoLabel}>DATES</Text>
-                            <Text style={styles.infoValue}>Upcoming</Text>
+                            <Text style={styles.infoValue}>
+                                {Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24))} days
+                            </Text>
                         </View>
                     </View>
 
@@ -901,16 +892,75 @@ const styles = StyleSheet.create({
     createFinalBtn: { flex: 2, height: 58, borderRadius: 20, overflow: 'hidden' },
     finalGradient: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
     createFinalText: { color: '#fff', fontSize: 17, fontWeight: '900', letterSpacing: 0.5 },
-    detectingChip: {
-        width: 60,
-        height: 52,
+    // Date Picker Row (New)
+    datePickerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 20,
+    },
+    dateSelectionBox: {
+        flex: 1,
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderRadius: 20,
+        padding: 16,
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.05)',
+        gap: 4,
+    },
+    dateSelectionBoxActive: {
+        backgroundColor: 'rgba(14, 165, 233, 0.1)',
+        borderColor: 'rgba(14, 165, 233, 0.4)',
+    },
+    dateTypeLabel: {
+        color: 'rgba(255,255,255,0.3)',
+        fontSize: 9,
+        fontWeight: '800',
+        letterSpacing: 1,
+    },
+    dateValueText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '800',
+    },
+    dateDivider: {
+        width: 32,
+        height: 32,
         borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.05)',
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(14, 165, 233, 0.05)',
-        marginRight: 12,
+    },
+
+    // Status Toggle Grid (New)
+    statusToggleGrid: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    statusToggleBtn: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        height: 54,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.03)',
         borderWidth: 1,
-        borderColor: 'rgba(14, 165, 233, 0.1)',
+        borderColor: 'rgba(255,255,255,0.05)',
+    },
+    statusToggleBtnActive: {
+        backgroundColor: '#0EA5E9',
+        borderColor: '#38BDF8',
+    },
+    statusToggleText: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 14,
+        fontWeight: '700',
+    },
+    statusToggleTextActive: {
+        color: '#fff',
     },
     liveRateBadge: {
         backgroundColor: 'rgba(14, 165, 233, 0.1)',
@@ -937,28 +987,38 @@ const styles = StyleSheet.create({
 
     // Modal Styles
     modalOverlay: {
-        flex: 1, backgroundColor: 'rgba(0,0,0,0.8)',
+        flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
         justifyContent: 'center', alignItems: 'center', padding: 20
     },
     modalContent: {
-        backgroundColor: '#1E293B', width: '100%', borderRadius: 28, padding: 24,
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
+        backgroundColor: '#1E293B', width: '100%', borderRadius: 32, padding: 24,
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+        shadowColor: '#000', shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.5, shadowRadius: 30, elevation: 20
     },
-    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 25 },
-    modalTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
-    calendarPlaceholder: { alignItems: 'center', paddingVertical: 20 },
-    calendarNote: { color: 'rgba(255,255,255,0.4)', fontSize: 14, marginTop: 12, textAlign: 'center' },
-    dateSelectorGrid: { flexDirection: 'row', gap: 12, marginTop: 30, flexWrap: 'wrap', justifyContent: 'center' },
-    dateQuickOption: {
-        width: 60, height: 75, backgroundColor: 'rgba(255,255,255,0.05)',
-        borderRadius: 16, justifyContent: 'center', alignItems: 'center',
-        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)'
-    },
-    quickDay: { color: '#fff', fontSize: 18, fontWeight: '800' },
-    quickMonth: { color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '700', marginTop: 2 },
-    modalCloseBtn: {
-        backgroundColor: 'rgba(255,255,255,0.05)', padding: 16,
-        borderRadius: 16, marginTop: 30, alignItems: 'center'
-    },
-    modalCloseText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+    modalTitle: { color: '#fff', fontSize: 20, fontWeight: '800' },
+    modalSubtitle: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 4, fontWeight: '500' },
+    modalCloseBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' },
+
+    calendarContainer: { marginTop: 10 },
+    calendarHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, paddingHorizontal: 4 },
+    navBtn: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' },
+    monthLabel: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+    weekDaysRow: { flexDirection: 'row', marginBottom: 15 },
+    weekDayText: { flex: 1, textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 12, fontWeight: '800' },
+
+    daysGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+    dayCell: { width: '14.28%', height: 45, justifyContent: 'center', alignItems: 'center', marginBottom: 4, borderRadius: 12, position: 'relative' },
+    dayCellSelected: { backgroundColor: '#0EA5E9' },
+    dayText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+    dayTextSelected: { color: '#fff', fontWeight: '800' },
+    dayTextToday: { color: '#0EA5E9', fontWeight: '800' },
+    todayIndicator: { position: 'absolute', bottom: 6, width: 4, height: 4, borderRadius: 2, backgroundColor: '#0EA5E9' },
+
+    modalFooter: { marginTop: 24 },
+    confirmModalBtn: { height: 56, borderRadius: 16, overflow: 'hidden' },
+    confirmModalGradient: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    confirmModalText: { color: '#fff', fontSize: 16, fontWeight: '800' },
 });

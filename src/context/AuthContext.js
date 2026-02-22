@@ -4,8 +4,6 @@ import {
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signOut,
-    GoogleAuthProvider,
-    signInWithCredential
 } from 'firebase/auth';
 import { auth, db } from '../config/firebase';
 import { doc, setDoc, getDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
@@ -17,31 +15,54 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        let unsubDoc = null;
+
         const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+            // Clean up previous document listener if it exists
+            if (unsubDoc) {
+                unsubDoc();
+                unsubDoc = null;
+            }
+
             if (authUser) {
-                // Fetch initial user data
-                const userDoc = await getDoc(doc(db, 'users', authUser.uid));
-                const userData = userDoc.exists() ? userDoc.data() : {};
-                setUser({ ...authUser, ...userData });
+                try {
+                    // Fetch initial user data
+                    const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+                    const userData = userDoc.exists() ? userDoc.data() : {};
 
-                // Subscribe to real-time updates for the user document
-                const userRef = doc(db, 'users', authUser.uid);
-                const unsubDoc = onSnapshot(userRef, (doc) => {
-                    if (doc.exists()) {
-                        setUser(prev => ({ ...prev, ...doc.data() }));
-                    }
-                });
+                    // Set initial user state with a clean object
+                    const cleanUser = {
+                        uid: authUser.uid,
+                        email: authUser.email,
+                        displayName: authUser.displayName,
+                        photoURL: authUser.photoURL,
+                        ...userData
+                    };
+                    setUser(cleanUser);
 
-                return () => {
-                    unsubDoc();
-                };
+                    // Subscribe to real-time updates for the user document
+                    const userRef = doc(db, 'users', authUser.uid);
+                    unsubDoc = onSnapshot(userRef, (doc) => {
+                        if (doc.exists()) {
+                            setUser(prev => prev ? ({ ...prev, ...doc.data() }) : null);
+                        }
+                    }, (error) => {
+                        console.error("User doc snapshot error:", error);
+                    });
+                } catch (error) {
+                    console.error("Error initializing user state:", error);
+                    setUser(null);
+                }
             } else {
                 setUser(null);
             }
             setLoading(false);
         });
 
-        return unsubscribe;
+        return () => {
+            unsubscribe();
+            if (unsubDoc) unsubDoc();
+        };
     }, []);
 
     const saveUserToFirestore = async (user, additionalData = {}) => {
@@ -73,15 +94,8 @@ export const AuthProvider = ({ children }) => {
         return signOut(auth);
     };
 
-    const loginWithGoogle = async (idToken) => {
-        const credential = GoogleAuthProvider.credential(idToken);
-        const userCredential = await signInWithCredential(auth, credential);
-        await saveUserToFirestore(userCredential.user);
-        return userCredential;
-    };
-
     return (
-        <AuthContext.Provider value={{ user, loading, login, signup, logout, loginWithGoogle }}>
+        <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
             {children}
         </AuthContext.Provider>
     );

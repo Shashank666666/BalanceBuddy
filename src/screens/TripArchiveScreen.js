@@ -57,20 +57,45 @@ export default function TripArchiveScreen({ navigation }) {
 
     useEffect(() => {
         if (!user) return;
-        const q = query(
-            collection(db, 'trips'),
-            where('creatorId', '==', user.uid),
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            // Archive = Completed or Cancelled
-            const archived = all
-                .filter(t => t.status === 'Completed' || t.status === 'Cancelled')
-                .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            setArchivedTrips(archived);
+
+        let unsub2 = null;
+        const q1 = query(collection(db, 'trips'), where('travellerEmails', 'array-contains', user.email?.toLowerCase()));
+        const q2 = query(collection(db, 'trips'), where('creatorId', '==', user.uid));
+
+        const unsub1 = onSnapshot(q1, (snap1) => {
+            const trips1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            if (unsub2) unsub2();
+
+            unsub2 = onSnapshot(q2, (snap2) => {
+                const trips2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                // Merge and dedup
+                const merged = [...trips1];
+                trips2.forEach(t => {
+                    if (!merged.find(m => m.id === t.id)) merged.push(t);
+                });
+
+                // Filter for Archive = Completed or Cancelled
+                const archived = merged
+                    .filter(t => t.status === 'Completed' || t.status === 'Cancelled')
+                    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+                setArchivedTrips(archived);
+                setLoading(false);
+            }, (error) => {
+                console.error('Error fetching creator archived trips:', error);
+                setLoading(false);
+            });
+        }, (error) => {
+            console.error('Error fetching participant archived trips:', error);
             setLoading(false);
         });
-        return () => unsub();
+
+        return () => {
+            unsub1();
+            if (unsub2) unsub2();
+        };
     }, [user]);
 
     const displayed = filter === 'All'
@@ -175,7 +200,11 @@ export default function TripArchiveScreen({ navigation }) {
                                             )}
 
                                             {/* Card */}
-                                            <View style={styles.tripCard}>
+                                            <TouchableOpacity
+                                                style={styles.tripCard}
+                                                activeOpacity={0.7}
+                                                onPress={() => navigation.navigate('TripDetail', { trip })}
+                                            >
                                                 <View style={styles.tripCardHeader}>
                                                     {/* Icon + Name */}
                                                     <View style={styles.tripIconWrap}>
@@ -187,6 +216,7 @@ export default function TripArchiveScreen({ navigation }) {
                                                             <Ionicons name="location-outline" size={12} color="rgba(255,255,255,0.4)" />
                                                             <Text style={styles.tripDestination}>
                                                                 {trip.destination || 'Destination not set'}
+                                                                {trip.destinationCount > 1 ? ` (+${trip.destinationCount - 1})` : ''}
                                                             </Text>
                                                         </View>
                                                     </View>
@@ -222,10 +252,10 @@ export default function TripArchiveScreen({ navigation }) {
                                                 {/* Destination country label if distinct */}
                                                 {trip.destination && (
                                                     <View style={styles.placeTag}>
-                                                        <Text style={styles.placeTagText}>📍 {trip.destination}</Text>
+                                                        <Text style={styles.placeTagText}>📍 {trip.destination}{trip.destinationCount > 1 ? ` +${trip.destinationCount - 1}` : ''}</Text>
                                                     </View>
                                                 )}
-                                            </View>
+                                            </TouchableOpacity>
                                         </View>
                                     </View>
                                 );

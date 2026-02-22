@@ -14,13 +14,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, FONTS, LIGHT, DARK } from '../constants/theme';
 import { db } from '../config/firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { ActivityIndicator, Alert } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
-const FILTERS = ['All', 'Active', 'Planning', 'Completed'];
+const FILTERS = ['All', 'Active', 'Planning'];
 
 const Avatar = ({ letter, color, style }) => (
     <View style={[styles.avatar, { backgroundColor: color }, style]}>
@@ -30,7 +30,6 @@ const Avatar = ({ letter, color, style }) => (
 
 const TripCard = ({ trip, navigation }) => {
     const isActive = trip.status === 'Active';
-    const isCompleted = trip.status === 'Completed';
 
     return (
         <TouchableOpacity
@@ -44,7 +43,7 @@ const TripCard = ({ trip, navigation }) => {
                         colors={['#0EA5E9', '#2DD4BF']}
                         style={styles.tripIcon}
                     >
-                        <Text style={styles.tripIconEmoji}>✈️</Text>
+                        <Text style={styles.tripIconEmoji}>{trip.icon || '✈️'}</Text>
                     </LinearGradient>
                 </View>
                 <View style={styles.tripInfo}>
@@ -52,15 +51,18 @@ const TripCard = ({ trip, navigation }) => {
                         <Text style={styles.tripName}>{trip.name}</Text>
                         <View style={[
                             styles.statusBadge,
-                            isActive ? styles.activeBadge : styles.completedBadge
+                            isActive ? styles.activeBadge : styles.planningBadge
                         ]}>
                             <Text style={[
                                 styles.statusBadgeText,
-                                isActive ? styles.activeText : styles.completedText
+                                isActive ? styles.activeText : styles.planningText
                             ]}>{trip.status}</Text>
                         </View>
                     </View>
-                    <Text style={styles.tripLocation}>{trip.destination || 'No location'}</Text>
+                    <Text style={styles.tripLocation}>
+                        {trip.destination || 'No location'}
+                        {trip.destinationCount > 1 ? ` (+${trip.destinationCount - 1})` : ''}
+                    </Text>
                     <View style={styles.tripMetaRow}>
                         <Ionicons name="people-outline" size={13} color={COLORS.textSecondary} />
                         <Text style={styles.tripMeta}> {trip.travellers?.length || 0} travellers</Text>
@@ -102,10 +104,25 @@ const TripCard = ({ trip, navigation }) => {
                 />
             </View>
 
-            {/* Action Button for Active */}
             {isActive && (
-                <TouchableOpacity style={styles.completeBtn} activeOpacity={0.8}>
-                    <Ionicons name="checkmark-circle-outline" size={18} color={COLORS.green} />
+                <TouchableOpacity
+                    style={styles.completeBtn}
+                    onPress={async () => {
+                        Alert.alert('Complete Trip', 'Mark this trip as completed?', [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                                text: 'Complete',
+                                onPress: async () => {
+                                    try {
+                                        await updateDoc(doc(db, 'trips', trip.id), { status: 'Completed' });
+                                    } catch (e) {
+                                        Alert.alert('Error', 'Failed to complete trip');
+                                    }
+                                }
+                            }
+                        ]);
+                    }}
+                >
                     <Text style={styles.completeBtnText}>Complete Trip</Text>
                 </TouchableOpacity>
             )}
@@ -125,29 +142,32 @@ export default function TripsScreen({ navigation }) {
     useEffect(() => {
         if (!user) return;
 
-        const q = query(
-            collection(db, 'trips'),
-            where('creatorId', '==', user.uid)
-        );
+        let unsub2 = null;
+        const q1 = query(collection(db, 'trips'), where('travellerEmails', 'array-contains', user.email?.toLowerCase()));
+        const q2 = query(collection(db, 'trips'), where('creatorId', '==', user.uid));
 
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const tripsData = [];
-            querySnapshot.forEach((doc) => {
-                tripsData.push({ id: doc.id, ...doc.data() });
+        const unsub1 = onSnapshot(q1, (snap1) => {
+            const trips1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+            if (unsub2) unsub2();
+            unsub2 = onSnapshot(q2, (snap2) => {
+                const trips2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+                const merged = [...trips1];
+                trips2.forEach(t => {
+                    if (!merged.find(m => m.id === t.id)) merged.push(t);
+                });
+                merged.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+                setTrips(merged);
+                setLoading(false);
             });
-
-            // Sort manually to avoid index requirement
-            tripsData.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-
-            setTrips(tripsData);
-            setLoading(false);
         }, (error) => {
             console.error('Error fetching trips: ', error);
             setLoading(false);
-            Alert.alert('Error', 'Failed to fetch trips.');
         });
 
-        return () => unsubscribe();
+        return () => {
+            unsub1();
+            if (unsub2) unsub2();
+        };
     }, [user]);
 
     const filteredTrips = trips.filter(t => {
@@ -230,7 +250,7 @@ export default function TripsScreen({ navigation }) {
                     <View style={styles.emptyContainer}>
                         <View style={styles.emptyIconCircle}>
                             <Ionicons
-                                name={activeFilter === 'Completed' ? "checkmark-done-circle-outline" : "map-outline"}
+                                name="map-outline"
                                 size={40}
                                 color="rgba(255,255,255,0.1)"
                             />
@@ -238,8 +258,7 @@ export default function TripsScreen({ navigation }) {
                         <Text style={styles.emptyText}>
                             {searchText ? "No adventures match search" :
                                 activeFilter === 'Active' ? "No active trips" :
-                                    activeFilter === 'Planning' ? "No trips planned" :
-                                        activeFilter === 'Completed' ? "No completed trips" : "No trips found"}
+                                    activeFilter === 'Planning' ? "No trips planned" : "No trips found"}
                         </Text>
                         <Text style={styles.emptySubText}>
                             {searchText ? "Try different keywords or check your spelling" :
@@ -248,9 +267,23 @@ export default function TripsScreen({ navigation }) {
                         </Text>
                     </View>
                 ) : (
-                    filteredTrips.map(trip => (
-                        <TripCard key={trip.id} trip={trip} navigation={navigation} />
-                    ))
+                    <>
+                        {filteredTrips.filter(t => t.status !== 'Completed').map(trip => (
+                            <TripCard key={trip.id} trip={trip} navigation={navigation} />
+                        ))}
+
+                        {activeFilter === 'All' && filteredTrips.filter(t => t.status === 'Completed').length > 0 && (
+                            <>
+                                <View style={styles.completedHeader}>
+                                    <Ionicons name="checkmark-done" size={16} color="rgba(255,255,255,0.4)" />
+                                    <Text style={styles.completedHeaderText}>COMPLETED JOURNEYS</Text>
+                                </View>
+                                {filteredTrips.filter(t => t.status === 'Completed').map(trip => (
+                                    <TripCard key={trip.id} trip={trip} navigation={navigation} />
+                                ))}
+                            </>
+                        )}
+                    </>
                 )}
 
             </ScrollView>
@@ -439,9 +472,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(16, 185, 129, 0.1)',
         borderColor: 'rgba(16, 185, 129, 0.2)',
     },
-    completedBadge: {
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+    planningBadge: {
+        backgroundColor: 'rgba(167, 139, 250, 0.1)',
+        borderColor: 'rgba(167, 139, 250, 0.2)',
     },
     statusBadgeText: {
         fontSize: 10,
@@ -451,8 +484,15 @@ const styles = StyleSheet.create({
     activeText: {
         color: '#10B981',
     },
+    completedBadge: {
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
     completedText: {
         color: 'rgba(255, 255, 255, 0.4)',
+    },
+    planningText: {
+        color: '#A78BFA',
     },
     tripLocation: {
         color: 'rgba(255, 255, 255, 0.5)',
@@ -527,17 +567,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 8,
-        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        backgroundColor: '#10B981',
         borderRadius: 14,
         paddingVertical: 12,
         borderWidth: 1,
-        borderColor: 'rgba(16, 185, 129, 0.2)',
+        borderColor: '#059669',
+        marginTop: 8,
     },
     completeBtnText: {
-        color: '#10B981',
+        color: '#fff',
         fontSize: 14,
-        fontWeight: '700',
+        fontWeight: '800',
     },
+
+    // Completed section header
+    completedHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 30, marginBottom: 15, paddingHorizontal: 4 },
+    completedHeaderText: { color: 'rgba(255,255,255,0.3)', fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
 
     // Empty State
     emptyContainer: {
