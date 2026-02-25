@@ -39,3 +39,41 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Firebase
+firebase.json
+.firebaserc
+
+# Build artifacts
+build/
+*.tgz
+*.tar.gz
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Package manager lock files (keep package-lock.json but ignore others)
+yarn.lock
+pnpm-lock.yaml
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
