@@ -5,15 +5,15 @@ import { getStorage } from 'firebase/storage';
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-// Your web app's Firebase configuration
+// Firebase configuration from environment variables
 const firebaseConfig = {
-    apiKey: "AIzaSyBEwrVWaZtJmsX1E5djf0ECN0aiQSDES7g",
-    authDomain: "balancebuddy-ff86f.firebaseapp.com",
-    projectId: "balancebuddy-ff86f",
-    storageBucket: "balancebuddy-ff86f.firebasestorage.app",
-    messagingSenderId: "658599798345",
-    appId: "1:658599798345:web:bafffee4ff22d58e7cc198",
-    measurementId: "G-MBESD825P3"
+    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
+    measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase

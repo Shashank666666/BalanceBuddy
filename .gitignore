@@ -32,6 +32,11 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
+.env.*
+
+# Keep .env.example as template
+!.env.example
 
 # typescript
 *.tsbuildinfo
